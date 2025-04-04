@@ -1,0 +1,465 @@
+import streamlit as st
+import plotly.express as px
+import pandas as pd
+import numpy as np
+from typing import Dict, List, Any, Optional
+
+class CardDisplay:
+    @staticmethod
+    def display_image(image_url: Optional[str] = None):
+        """Display card image with fallback."""
+        if image_url:
+            try:
+                st.image(image_url, use_column_width=True)
+            except Exception as e:
+                st.warning(f"Could not display card image: {str(e)}")
+                st.image("https://via.placeholder.com/300x400?text=No+Image", use_column_width=True)
+        else:
+            st.image("https://via.placeholder.com/300x400?text=No+Image", use_column_width=True)
+
+    @staticmethod
+    def display_card_details(card):
+        """Display the details of a selected card"""
+        if not card:
+            st.warning("No card selected")
+            return
+            
+        # Create a container for the card details
+        with st.container():
+            # Display card image
+            if card.get('image_url'):
+                st.image(card['image_url'], width=300)
+            
+            # Display card information
+            st.markdown("### Card Details")
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                st.markdown(f"**Title:** {card.get('title', 'N/A')}")
+                st.markdown(f"**Price:** ${card.get('price', 'N/A'):,.2f}")
+            
+            with col2:
+                st.markdown(f"**Date:** {card.get('date', 'N/A')}")
+                st.markdown(f"**Image URL:** {card.get('image_url', 'N/A')}")
+            
+            # Add a divider
+            st.divider()
+
+    @staticmethod
+    def display_price_metrics(market_data: Dict[str, Any]):
+        """Display price metrics in a grid layout"""
+        if not market_data or 'metrics' not in market_data:
+            st.warning("No market data available")
+            return
+            
+        metrics = market_data['metrics']
+        variations = market_data.get('variations', {})
+        
+        # Get the variation of the selected card
+        selected_variation = None
+        for variation, data in variations.items():
+            if variation in st.session_state.selected_card.get('title', ''):
+                selected_variation = variation
+                break
+        
+        if selected_variation and selected_variation in variations:
+            variation_data = variations[selected_variation]
+            metrics = variation_data['metrics']
+            
+            st.markdown(f"### Price Metrics for {selected_variation} Variation")
+        else:
+            st.markdown("### Price Metrics")
+        
+        # Create a 2x2 grid for metrics
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.metric("Median Price", f"${metrics.get('median_price', 0):,.2f}")
+            st.metric("Average Price", f"${metrics.get('avg_price', 0):,.2f}")
+            
+        with col2:
+            st.metric("Price Range", f"${metrics.get('low_price', 0):,.2f} - ${metrics.get('high_price', 0):,.2f}")
+            st.metric("Total Sales", metrics.get('total_sales', 0))
+            
+        # Display PSA-specific prices if available
+        if metrics.get('has_graded_data'):
+            st.markdown("### Graded Card Prices")
+            psa_col1, psa_col2 = st.columns(2)
+            
+            with psa_col1:
+                if metrics.get('psa9_multiplier'):
+                    psa9_price = metrics['median_price'] * metrics['psa9_multiplier']
+                    st.metric("PSA 9 Price", f"${psa9_price:,.2f}")
+                    
+            with psa_col2:
+                if metrics.get('psa10_multiplier'):
+                    psa10_price = metrics['median_price'] * metrics['psa10_multiplier']
+                    st.metric("PSA 10 Price", f"${psa10_price:,.2f}")
+
+    @staticmethod
+    def display_market_scores(market_data: Dict[str, Any]):
+        """Display market scores in a grid layout"""
+        if not market_data or 'scores' not in market_data:
+            st.warning("No market data available")
+            return
+            
+        scores = market_data['scores']
+        
+        # Create a 3-column grid for scores
+        col1, col2, col3 = st.columns(3)
+        
+        with col1:
+            st.metric("Trend Score", f"{scores.get('trend', 0):.1f}/10")
+            
+        with col2:
+            st.metric("Volatility Score", f"{scores.get('volatility', 0):.1f}/10")
+            
+        with col3:
+            st.metric("Liquidity Score", f"{scores.get('liquidity', 0):.1f}/10")
+
+    @staticmethod
+    def display_market_grades(market_data: Dict[str, Any]):
+        """Display market grades"""
+        if not market_data or 'grades' not in market_data:
+            st.warning("No market data available")
+            return
+            
+        grades = market_data['grades']
+        
+        # Create a 2-column grid for grades
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.metric("Buy Grade", grades.get('buy_grade', 'N/A'))
+            
+        with col2:
+            st.metric("Sell Grade", grades.get('sell_grade', 'N/A'))
+
+    @staticmethod
+    def display_market_recommendations(market_data: Dict[str, Any]) -> None:
+        """Display market recommendations based on analysis."""
+        if not market_data or 'scores' not in market_data or 'grades' not in market_data:
+            st.warning("No market data available for recommendations")
+            return
+            
+        scores = market_data['scores']
+        grades = market_data['grades']
+        metrics = market_data.get('metrics', {})
+        
+        # Generate recommendations based on scores and grades
+        recommendations = []
+        
+        # Trend-based recommendations
+        if scores['trend'] >= 0.7:
+            recommendations.append("Strong upward price trend detected - Consider buying")
+        elif scores['trend'] >= 0.5:
+            recommendations.append("Moderate upward price trend - Good buying opportunity")
+        elif scores['trend'] <= 0.3:
+            recommendations.append("Downward price trend - Consider waiting or selling")
+            
+        # Volatility-based recommendations
+        if scores['volatility'] >= 0.7:
+            recommendations.append("High market volatility - Consider waiting for stability")
+        elif scores['volatility'] <= 0.3:
+            recommendations.append("Low market volatility - Good time for transactions")
+            
+        # Liquidity-based recommendations
+        if scores['liquidity'] >= 0.7:
+            recommendations.append("High market liquidity - Good time to buy or sell")
+        elif scores['liquidity'] <= 0.3:
+            recommendations.append("Low market liquidity - May need to wait longer for transactions")
+            
+        # Grade-based recommendations
+        if grades['buy_grade'] == 'A':
+            recommendations.append("Excellent buying opportunity based on market conditions")
+        elif grades['buy_grade'] == 'B':
+            recommendations.append("Good buying opportunity with some favorable conditions")
+        elif grades['sell_grade'] == 'A':
+            recommendations.append("Excellent selling opportunity based on market conditions")
+        elif grades['sell_grade'] == 'B':
+            recommendations.append("Good selling opportunity with some favorable conditions")
+            
+        # Display recommendations
+        st.markdown("### Market Recommendations")
+        if recommendations:
+            for rec in recommendations:
+                st.markdown(f"- {rec}")
+        else:
+            st.markdown("No specific recommendations available at this time.")
+            
+        # Display market summary
+        st.markdown("### Market Summary")
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric("Trend Score", f"{scores['trend']:.1f}")
+        with col2:
+            st.metric("Volatility Score", f"{scores['volatility']:.1f}")
+        with col3:
+            st.metric("Liquidity Score", f"{scores['liquidity']:.1f}")
+            
+        st.markdown(f"**Overall Market Grade:** {grades['buy_grade']} (Buy) / {grades['sell_grade']} (Sell)")
+
+    @staticmethod
+    def display_profit_calculator(market_data: Dict[str, Any]) -> None:
+        """Display profit calculator with cost breakdown."""
+        if not market_data or 'metrics' not in market_data:
+            st.warning("No market data available for profit calculation")
+            return
+            
+        metrics = market_data.get('metrics', {})
+        variations = market_data.get('variations', {})
+        
+        # Get the variation of the selected card
+        selected_variation = None
+        for variation, data in variations.items():
+            if variation in st.session_state.selected_card.get('title', ''):
+                selected_variation = variation
+                break
+        
+        if selected_variation and selected_variation in variations:
+            variation_data = variations[selected_variation]
+            metrics = variation_data['metrics']
+            
+            st.markdown(f"### Cost Calculator for {selected_variation} Variation")
+        else:
+            st.markdown("### Cost Calculator")
+        
+        # Purchase inputs
+        purchase_price = st.number_input("Purchase Price ($)", min_value=0.0, value=float(metrics.get('median_price', 0.0)))
+        card_condition = st.selectbox("Card Condition", ["Raw", "PSA 9", "PSA 10"])
+        shipping_cost = st.number_input("Shipping Cost ($)", min_value=0.0, value=5.0)
+        seller_fee = st.number_input("Seller Fee (%)", min_value=0.0, max_value=100.0, value=12.9)
+        sale_shipping = st.number_input("Sale Shipping ($)", min_value=0.0, value=5.0)
+        
+        # Calculate potential sale price based on condition
+        if card_condition == "PSA 9":
+            sale_price = purchase_price * metrics.get('psa9_multiplier', 2.0)
+        elif card_condition == "PSA 10":
+            sale_price = purchase_price * metrics.get('psa10_multiplier', 3.0)
+        else:
+            sale_price = purchase_price
+            
+        # Calculate costs
+        seller_fee_amount = sale_price * (seller_fee / 100)
+        total_costs = purchase_price + shipping_cost + seller_fee_amount + sale_shipping
+        potential_profit = sale_price - total_costs
+        profit_percentage = (potential_profit / total_costs * 100) if total_costs > 0 else 0
+        
+        # Display results
+        st.markdown("### Cost Breakdown")
+        col1, col2 = st.columns(2)
+        with col1:
+            st.markdown(f"**Purchase Price:** ${purchase_price:.2f}")
+            st.markdown(f"**Shipping Cost:** ${shipping_cost:.2f}")
+            st.markdown(f"**Seller Fee:** ${seller_fee_amount:.2f}")
+            st.markdown(f"**Sale Shipping:** ${sale_shipping:.2f}")
+            st.markdown(f"**Total Costs:** ${total_costs:.2f}")
+        with col2:
+            st.markdown(f"**Potential Sale Price:** ${sale_price:.2f}")
+            st.markdown(f"**Potential Profit:** ${potential_profit:.2f}")
+            st.markdown(f"**Profit Percentage:** {profit_percentage:.1f}%")
+            
+        # Grading analysis for raw cards
+        if card_condition == "Raw":
+            st.markdown("### Grading Analysis")
+            grading_cost = st.number_input("Grading Cost ($)", min_value=0.0, value=25.0)
+            grading_shipping = st.number_input("Grading Shipping ($)", min_value=0.0, value=10.0)
+            
+            # Calculate PSA 9 scenario
+            psa9_price = purchase_price * metrics.get('psa9_multiplier', 2.0)
+            psa9_costs = purchase_price + shipping_cost + grading_cost + grading_shipping
+            psa9_profit = psa9_price - psa9_costs
+            psa9_percentage = (psa9_profit / psa9_costs * 100) if psa9_costs > 0 else 0
+            
+            # Calculate PSA 10 scenario
+            psa10_price = purchase_price * metrics.get('psa10_multiplier', 3.0)
+            psa10_costs = purchase_price + shipping_cost + grading_cost + grading_shipping
+            psa10_profit = psa10_price - psa10_costs
+            psa10_percentage = (psa10_profit / psa10_costs * 100) if psa10_costs > 0 else 0
+            
+            st.markdown("#### PSA 9 Scenario")
+            col1, col2 = st.columns(2)
+            with col1:
+                st.markdown(f"**Potential Sale Price:** ${psa9_price:.2f}")
+                st.markdown(f"**Total Costs:** ${psa9_costs:.2f}")
+            with col2:
+                st.markdown(f"**Potential Profit:** ${psa9_profit:.2f}")
+                st.markdown(f"**Profit Percentage:** {psa9_percentage:.1f}%")
+                
+            st.markdown("#### PSA 10 Scenario")
+            col1, col2 = st.columns(2)
+            with col1:
+                st.markdown(f"**Potential Sale Price:** ${psa10_price:.2f}")
+                st.markdown(f"**Total Costs:** ${psa10_costs:.2f}")
+            with col2:
+                st.markdown(f"**Potential Profit:** ${psa10_profit:.2f}")
+                st.markdown(f"**Profit Percentage:** {psa10_percentage:.1f}%")
+                
+            st.markdown("---")
+            st.markdown("**Note:** Actual results may vary based on card condition and market conditions.")
+
+    @staticmethod
+    def display_price_prediction(card: Dict[str, Any], market_data: Dict[str, Any]) -> None:
+        """Display price prediction based on market data."""
+        if not market_data or 'scores' not in market_data or 'metrics' not in market_data:
+            st.warning("No market data available for price prediction")
+            return
+            
+        metrics = market_data['metrics']
+        scores = market_data['scores']
+        
+        st.markdown("### Price Prediction")
+        
+        # Get current price
+        current_price = float(card.get('price', 0))
+        
+        # Calculate predicted price based on trend
+        trend_score = scores['trend']
+        trend_factor = 1.0 + (trend_score - 5.0) * 0.1  # Scale trend to reasonable range
+        
+        predicted_price = current_price * trend_factor
+        
+        # Display prediction
+        col1, col2 = st.columns(2)
+        with col1:
+            st.metric("Current Price", f"${current_price:,.2f}")
+            st.metric("Trend Score", f"{trend_score:.1f}/10")
+        with col2:
+            st.metric("Predicted Price", f"${predicted_price:,.2f}")
+            st.metric("Price Change", f"{((predicted_price - current_price) / current_price * 100):+.1f}%")
+            
+        # Display confidence level
+        confidence = min(100, max(0, (scores['liquidity'] * 10)))  # Scale liquidity to confidence
+        st.progress(confidence / 100)
+        st.markdown(f"**Prediction Confidence:** {confidence:.0f}%")
+        
+        # Create price prediction graph
+        st.markdown("### Price Forecast")
+        
+        # Generate future dates and prices
+        future_months = 12
+        dates = pd.date_range(start=pd.Timestamp.now(), periods=future_months + 1, freq='M')
+        
+        # Calculate monthly price changes based on trend
+        monthly_change = (predicted_price - current_price) / future_months
+        
+        # Generate price predictions
+        prices = [current_price]
+        for i in range(future_months):
+            prices.append(prices[-1] + monthly_change)
+            
+        # Create DataFrame for plotting
+        df = pd.DataFrame({
+            'Date': dates,
+            'Price': prices
+        })
+        
+        # Create the plot
+        fig = px.line(df, x='Date', y='Price',
+                     title='Price Forecast Over Time',
+                     labels={'Price': 'Price ($)', 'Date': 'Date'})
+        
+        # Add confidence interval
+        confidence_interval = (scores['volatility'] / 10) * 0.2  # 20% max variation
+        df['Upper Bound'] = df['Price'] * (1 + confidence_interval)
+        df['Lower Bound'] = df['Price'] * (1 - confidence_interval)
+        
+        fig.add_scatter(x=df['Date'], y=df['Upper Bound'],
+                       line=dict(dash='dash', color='gray'),
+                       name='Upper Bound')
+        fig.add_scatter(x=df['Date'], y=df['Lower Bound'],
+                       line=dict(dash='dash', color='gray'),
+                       name='Lower Bound')
+        
+        # Update layout
+        fig.update_layout(
+            hovermode='x unified',
+            showlegend=True,
+            legend=dict(
+                yanchor="top",
+                y=0.99,
+                xanchor="left",
+                x=0.01
+            )
+        )
+        
+        st.plotly_chart(fig, use_container_width=True)
+        
+        # Display factors affecting prediction
+        st.markdown("### Factors Affecting Prediction")
+        st.markdown(f"- **Market Trend:** {'Upward' if trend_score > 5 else 'Downward' if trend_score < 5 else 'Stable'}")
+        st.markdown(f"- **Market Volatility:** {'High' if scores['volatility'] > 7 else 'Moderate' if scores['volatility'] > 3 else 'Low'}")
+        st.markdown(f"- **Market Liquidity:** {'High' if scores['liquidity'] > 7 else 'Moderate' if scores['liquidity'] > 3 else 'Low'}")
+        
+        st.markdown("---")
+        st.markdown("**Note:** Price predictions are based on historical market data and trends. Actual results may vary.")
+
+    @staticmethod
+    def display_selected_card(selected_card: Dict[str, Any], market_data: Dict[str, Any]):
+        """Display selected card details and analysis."""
+        if not selected_card:
+            st.warning("No card selected")
+            return
+            
+        # Display card details
+        st.markdown("### Selected Card")
+        CardDisplay.display_card_details(selected_card)
+        
+        # Display market analysis
+        if market_data:
+            st.markdown("### Market Analysis")
+            CardDisplay.display_price_metrics(market_data)
+            CardDisplay.display_market_scores(market_data)
+            CardDisplay.display_market_grades(market_data)
+            CardDisplay.display_price_prediction(selected_card, market_data)
+            CardDisplay.display_profit_calculator(market_data)
+            CardDisplay.display_market_recommendations(market_data)
+
+class SearchForm:
+    def __init__(self):
+        self.player = ""
+        self.year = ""
+        self.card_set = ""
+        self.card_number = ""
+        self.variation = ""
+        self.min_price = 0.0
+        self.max_price = 1000.0
+        self.condition = "Any"
+        self.scenario = "Market Analysis"
+        
+    def display(self) -> bool:
+        """Display search form and return True if search is triggered."""
+        st.markdown("### Search Cards")
+        
+        # Create two columns for the form
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            self.player = st.text_input("Player Name")
+            self.year = st.text_input("Year")
+            self.card_set = st.text_input("Card Set")
+            self.card_number = st.text_input("Card Number")
+            
+        with col2:
+            self.variation = st.selectbox("Variation", ["Any", "Raw", "PSA 9", "PSA 10"])
+            self.min_price = st.number_input("Min Price ($)", min_value=0.0, value=0.0)
+            self.max_price = st.number_input("Max Price ($)", min_value=0.0, value=1000.0)
+            self.condition = st.selectbox("Condition", ["Any", "Raw", "PSA 9", "PSA 10"])
+            self.scenario = st.selectbox("Analysis Scenario", ["Market Analysis", "Grading Analysis", "Profit Calculator"])
+        
+        # Search button
+        return st.button("Search")
+        
+    def get_search_params(self) -> Dict[str, Any]:
+        """Get search parameters as dictionary."""
+        return {
+            'player': self.player,
+            'year': self.year,
+            'card_set': self.card_set,
+            'card_number': self.card_number,
+            'variation': self.variation,
+            'min_price': self.min_price,
+            'max_price': self.max_price,
+            'condition': self.condition,
+            'scenario': self.scenario
+        } 
