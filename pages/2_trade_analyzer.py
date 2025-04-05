@@ -1,17 +1,15 @@
 import streamlit as st
-
-# Configure the page
-st.set_page_config(
-    page_title="Trade Analyzer - Sports Card Analyzer Pro",
-    page_icon="🔄",
-    layout="wide"
-)
-
 from modules.analysis.trade_analyzer import TradeAnalyzer
 from modules.core.market_analysis import MarketAnalyzer
 from modules.core.price_predictor import PricePredictor
 from scrapers.ebay_interface import EbayInterface
-from pages.market_analysis import add_to_collection
+from modules.shared.collection_utils import add_to_collection
+import sys
+from pathlib import Path
+
+# Add the project root directory to Python path
+project_root = Path(__file__).parent.parent.absolute()
+sys.path.append(str(project_root))
 
 def init_session_state():
     """Initialize session state variables for trade analysis."""
@@ -127,10 +125,7 @@ def main():
             with st.container():
                 # Display card image
                 if card.get('image_url'):
-                    st.image(card['image_url'], 
-                            use_column_width=True,
-                            output_format="JPEG",
-                            caption=card['title'])
+                    st.image(card['image_url'], use_container_width=True)
                 
                 st.write(f"**{card['title']}**")
                 st.write(f"Condition: {card['condition']}")
@@ -208,10 +203,7 @@ def main():
             with st.container():
                 # Display card image
                 if card.get('image_url'):
-                    st.image(card['image_url'], 
-                            use_column_width=True,
-                            output_format="JPEG",
-                            caption=card['title'])
+                    st.image(card['image_url'], use_container_width=True)
                 
                 st.write(f"**{card['title']}**")
                 st.write(f"Condition: {card['condition']}")
@@ -239,126 +231,66 @@ def main():
                     help="Volatility (0=Very Stable, 10=Highly Volatile) | Liquidity (0=Hard to Sell, 10=Easy to Sell)"
                 )
                 
-                # Add to Collection button
-                if st.button("Add to Collection", key=f"add_to_collection_{i}"):
-                    # Create market data structure
-                    market_data = {
-                        'metrics': {
-                            'median_price': card['market_value']
-                        },
-                        'scores': {
-                            'liquidity_score': card['liquidity_score']
-                        }
-                    }
-                    
-                    # Add to collection using the market analysis page's function
-                    if add_to_collection(card, market_data):
-                        st.success("Card added to collection successfully!")
-                        st.rerun()
-                    else:
-                        st.error("Failed to add card to collection.")
-                
                 if st.button("Remove", key=f"remove_receiving_{i}"):
                     st.session_state.receiving_cards.pop(i)
                     st.rerun()
                 st.markdown("---")
     
     # Analyze trade button
-    if st.button("Analyze Trade"):
-        if not st.session_state.giving_cards or not st.session_state.receiving_cards:
+    if st.button("Analyze Trade", use_container_width=True):
+        if not st.session_state.giving_cards and not st.session_state.receiving_cards:
             st.error("Please add cards to both sides of the trade")
         else:
-            st.session_state.trade_analysis = trade_analyzer.analyze_trade(
-                st.session_state.giving_cards,
-                st.session_state.receiving_cards
-            )
+            with st.spinner("Analyzing trade..."):
+                analysis = trade_analyzer.analyze_trade(
+                    st.session_state.giving_cards,
+                    st.session_state.receiving_cards
+                )
+                st.session_state.trade_analysis = analysis
+                st.success("Trade analysis complete!")
     
-    # Display trade analysis
+    # Display trade analysis if available
     if st.session_state.trade_analysis:
-        st.markdown("---")
         st.subheader("Trade Analysis")
         
-        analysis = st.session_state.trade_analysis
-        
-        # Create columns for value metrics
-        col1, col2, col3 = st.columns(3)
-        
-        with col1:
+        # Overall trade value
+        if 'total_value' in st.session_state.trade_analysis:
             st.metric(
-                "Value You're Giving",
-                f"${analysis['giving_value']:.2f}"
+                "Overall Trade Value",
+                f"${st.session_state.trade_analysis['total_value']:.2f}",
+                f"{st.session_state.trade_analysis['value_difference']:+.1f}%"
             )
+        else:
+            st.warning("Trade value information not available")
+        
+        # Market health comparison
+        if 'giving_health' in st.session_state.trade_analysis and 'receiving_health' in st.session_state.trade_analysis:
             st.metric(
-                "Risk (Giving)",
-                f"{analysis['giving_risk']}/10"
+                "Market Health",
+                f"Giving: {st.session_state.trade_analysis['giving_health']}/10",
+                f"Receiving: {st.session_state.trade_analysis['receiving_health']}/10"
             )
+        else:
+            st.warning("Market health information not available")
         
-        with col2:
+        # Trend comparison
+        if 'giving_trend' in st.session_state.trade_analysis and 'receiving_trend' in st.session_state.trade_analysis:
             st.metric(
-                "Value You're Receiving",
-                f"${analysis['receiving_value']:.2f}",
-                f"{analysis['percentage_difference']:+.1f}%"
+                "Trend Comparison",
+                f"Giving: {st.session_state.trade_analysis['giving_trend']:+.1f}%",
+                f"Receiving: {st.session_state.trade_analysis['receiving_trend']:+.1f}%"
             )
-            st.metric(
-                "Risk (Receiving)",
-                f"{analysis['receiving_risk']}/10"
-            )
+        else:
+            st.warning("Trend information not available")
         
-        with col3:
-            st.metric(
-                "Trade Fairness",
-                f"{analysis['fairness_score']}/10"
-            )
-        
-        # Add market metrics comparison
-        st.subheader("Market Metrics Comparison")
-        metric_cols = st.columns(3)
-        
-        with metric_cols[0]:
-            st.metric(
-                "Price Trend",
-                f"{analysis['receiving_metrics']['avg_trend']:+.1f}%",
-                f"{analysis['metric_differences']['trend_difference']:+.1f}%",
-                help="Positive delta means cards you're receiving have stronger price trends"
-            )
-        
-        with metric_cols[1]:
-            st.metric(
-                "Volatility",
-                f"{int(analysis['receiving_metrics']['avg_volatility'])}/10",
-                f"{int(analysis['metric_differences']['volatility_difference']):+d}",
-                help="Volatility Scale: 0=Very Stable, 10=Highly Volatile. Lower is better. Negative delta means less volatile cards."
-            )
-        
-        with metric_cols[2]:
-            st.metric(
-                "Liquidity",
-                f"{analysis['receiving_metrics']['avg_liquidity']}/10",
-                f"{analysis['metric_differences']['liquidity_difference']:+.1f}",
-                help="Higher liquidity is better. Positive delta means more liquid cards"
-            )
-        
-        # Display recommendation with details
-        st.markdown("### Recommendation")
-        st.info(f"""
-        **{analysis['recommendation']}**
-        
-        {analysis['recommendation_details']}
-        """)
-        
-        # Add disclaimer
-        st.warning("""
-        ⚠️ **Disclaimer:** This analysis is based on current market data and trends.
-        Card values can change rapidly. Always do your own research and consider
-        factors like card condition, player performance, and market dynamics.
-        """)
-    
-    # Reset button
-    if st.button("Reset Trade"):
-        st.session_state.giving_cards = []
-        st.session_state.receiving_cards = []
-        st.session_state.trade_analysis = None
-        st.rerun()
+        # Recommendations
+        st.subheader("Recommendations")
+        if 'recommendation' in st.session_state.trade_analysis:
+            st.write(f"• {st.session_state.trade_analysis['recommendation']}")
+            if 'recommendation_details' in st.session_state.trade_analysis:
+                st.write(st.session_state.trade_analysis['recommendation_details'])
+        else:
+            st.warning("Recommendations not available")
 
 if __name__ == "__main__":
     main() 

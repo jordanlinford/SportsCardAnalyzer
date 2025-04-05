@@ -8,6 +8,19 @@ import base64
 import ast
 
 class DatabaseService:
+    _instance = None
+    
+    @classmethod
+    def get_instance(cls):
+        """Get the singleton instance of DatabaseService"""
+        if cls._instance is None:
+            cls._instance = DatabaseService()
+        return cls._instance
+        
+    def __init__(self):
+        """Initialize the database service"""
+        self.db = db
+
     @staticmethod
     def get_user_data(uid: str) -> Optional[Dict]:
         """Get user data from Firestore."""
@@ -402,4 +415,52 @@ class DatabaseService:
             print(f"Error getting user display cases: {str(e)}")
             import traceback
             print(f"Traceback: {traceback.format_exc()}")
-            return {} 
+            return {}
+
+    @staticmethod
+    def save_display_cases(uid: str, display_cases: Dict) -> bool:
+        """Save display cases to Firestore."""
+        try:
+            # Validate and prepare display cases data
+            validated_cases = {}
+            for name, case in display_cases.items():
+                # Ensure all cards have valid photo data
+                valid_cards = []
+                for card in case.get('cards', []):
+                    if 'photo' in card and card['photo']:
+                        # Convert photo to string if needed
+                        if not isinstance(card['photo'], str):
+                            card['photo'] = str(card['photo'])
+                        valid_cards.append(card)
+                    else:
+                        print(f"[DEBUG] Skipping card {card.get('player_name', 'Unknown')} in display case {name} - no valid photo")
+                
+                # Only include display cases with valid cards
+                if valid_cards:
+                    validated_cases[name] = {
+                        'name': str(case.get('name', '')),
+                        'description': str(case.get('description', '')),
+                        'tags': [str(tag) for tag in case.get('tags', [])],
+                        'cards': valid_cards,
+                        'total_value': float(case.get('total_value', 0.0)),
+                        'created_date': str(case.get('created_date', datetime.now().isoformat()))
+                    }
+
+            if not validated_cases:
+                print("[ERROR] No valid display cases to save")
+                return False
+
+            # Save to Firestore
+            db.collection('users').document(uid).update({
+                'display_cases': validated_cases,
+                'updated_at': datetime.now().isoformat()
+            })
+            
+            print(f"[DEBUG] Successfully saved {len(validated_cases)} display cases")
+            return True
+            
+        except Exception as e:
+            print(f"[ERROR] Failed to save display cases: {str(e)}")
+            import traceback
+            print(f"Traceback: {traceback.format_exc()}")
+            return False 

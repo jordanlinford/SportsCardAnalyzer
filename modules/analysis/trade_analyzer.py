@@ -73,6 +73,7 @@ class TradeAnalyzer:
         return {
             'giving_value': giving_value,
             'receiving_value': receiving_value,
+            'total_value': receiving_value,
             'value_difference': value_difference,
             'percentage_difference': percentage_difference,
             'fairness_score': fairness_score,
@@ -82,7 +83,11 @@ class TradeAnalyzer:
             'receiving_metrics': receiving_metrics,
             'metric_differences': metric_differences,
             'recommendation': recommendation,
-            'recommendation_details': details
+            'recommendation_details': details,
+            'giving_health': giving_metrics['avg_liquidity'],
+            'receiving_health': receiving_metrics['avg_liquidity'],
+            'giving_trend': giving_metrics['avg_trend'],
+            'receiving_trend': receiving_metrics['avg_trend']
         }
     
     def _calculate_total_value(self, cards: List[Dict[str, Any]]) -> float:

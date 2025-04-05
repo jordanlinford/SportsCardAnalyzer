@@ -8,6 +8,7 @@ from datetime import datetime, timedelta
 from modules.core.market_analysis import MarketAnalyzer
 from modules.core.price_predictor import PricePredictor
 from modules.firebase.user_management import UserManager
+from modules.shared.collection_utils import save_card_to_collection
 from scrapers.ebay_interface import EbayInterface
 from modules.ui.components import CardDisplay, display_profit_calculator
 import base64
@@ -18,14 +19,6 @@ import os
 from modules.database.service import DatabaseService
 from modules.database.models import Card, CardCondition
 from typing import List, Dict, Any, Union
-
-# Configure the page
-st.set_page_config(
-    page_title="Market Analysis - Sports Card Analyzer Pro",
-    page_icon="📈",
-    layout="wide",
-    initial_sidebar_state="collapsed"  # Collapse sidebar by default on mobile
-)
 
 # Add mobile-specific CSS
 st.markdown("""
@@ -179,87 +172,11 @@ def get_variation_groups(results):
 def add_to_collection(card_data, market_data):
     """Add a card from market analysis to collection"""
     try:
-        # First, show the card details and market data for confirmation
-        st.subheader("Confirm Card Details")
-        
-        cols = st.columns([1, 2])
-        with cols[0]:
-            if card_data.get('image_url'):
-                st.image(card_data['image_url'], 
-                        use_column_width=True,
-                        output_format="JPEG",
-                        caption=card_data['title'])
-        
-        with cols[1]:
-            st.write("Card Information:")
-            st.write(f"Title: {card_data['title']}")
-            st.write(f"Price: ${card_data['price']:.2f}")
-            st.write(f"Sale Date: {card_data['date']}")
-            
-            if market_data:
-                st.write("\nMarket Analysis:")
-                st.write(f"Average Price: ${market_data['metrics']['avg_price']:.2f}")
-                st.write(f"Price Range: ${market_data['metrics']['low_price']:.2f} - ${market_data['metrics']['high_price']:.2f}")
-                st.write(f"Volatility Score: {market_data['scores']['volatility_score']:.1f}/10")
-                st.write(f"Trend Score: {market_data['scores']['trend_score']:.1f}/10")
-                st.write(f"Liquidity Score: {market_data['scores']['liquidity_score']:.1f}/10")
-        
-        # Add option to search for a different card
-        st.write("---")
-        search_new = st.checkbox("Search for a different card?")
-        
-        if search_new:
-            with st.form("search_different_card"):
-                cols = st.columns(3)
-                with cols[0]:
-                    player_name = st.text_input("Player Name")
-                    year = st.text_input("Year")
-                with cols[1]:
-                    card_set = st.text_input("Card Set")
-                    card_number = st.text_input("Card Number")
-                with cols[2]:
-                    variation = st.text_input("Variation")
-                    condition = st.selectbox("Condition", ["Raw", "PSA 10", "PSA 9", "SGC 10", "SGC 9.5", "SGC 9"])
-                
-                negative_keywords = st.text_input(
-                    "Exclude Keywords (comma-separated)",
-                    help="Enter keywords to exclude from search, separated by commas"
-                )
-                
-                if st.form_submit_button("Search"):
-                    scraper = EbayInterface()
-                    analyzer = MarketAnalyzer()
-                    
-                    search_params = {
-                        'player_name': player_name,
-                        'year': year,
-                        'card_set': card_set,
-                        'card_number': card_number,
-                        'variation': variation,
-                        'negative_keywords': negative_keywords,
-                        'scenario': condition
-                    }
-                    
-                    with st.spinner("Searching for card..."):
-                        results = scraper.search_cards(**search_params)
-                        if results:
-                            new_market_data = analyzer.analyze_market_data(results)
-                            card_data = results[0]  # Use the first result
-                            market_data = new_market_data
-                            st.success("Card found! Please proceed with adding to collection.")
-                            st.rerun()
-                        else:
-                            st.error("No results found. Please try adjusting your search parameters.")
-                            return False
-        
-        st.write("---")
-        st.subheader("Add to Collection")
+        # Use player name from the original search form input
+        player_name = st.session_state.search_params.get('player_name', '')
         
         # Extract card details from title
         title = card_data['title']
-        # Extract player name (assuming it's the first part before the year)
-        player_name = title.split()[0:2]  # Take first two words as player name
-        player_name = " ".join(player_name)
         
         # Extract year (looking for 4-digit number)
         year_match = re.search(r'\b\d{4}\b', title)
@@ -278,103 +195,89 @@ def add_to_collection(card_data, market_data):
                           'Red', 'Blue', 'Green', 'Yellow', 'Purple', 'Orange', 'Pink']
         variation = next((term for term in variation_terms if term.lower() in title.lower()), "")
         
-        # Get purchase details
-        with st.form("add_card_form"):
-            col1, col2 = st.columns(2)
+        # Add to collection form
+        with st.form("add_to_collection_form"):
+            st.subheader("Add Card to Collection")
+            
+            # Create two rows of form fields
+            # First row with three columns
+            col1, col2, col3 = st.columns(3)
+            
             with col1:
                 player_name = st.text_input("Player Name", value=player_name)
                 year = st.text_input("Year", value=year)
+            
+            with col2:
                 card_set = st.text_input("Card Set", value=card_set)
                 card_number = st.text_input("Card Number", value=card_number)
             
-            with col2:
+            with col3:
                 variation = st.text_input("Variation", value=variation)
-                condition = st.selectbox("Condition", ["Raw", "PSA 9", "PSA 10"])
-                purchase_price = st.number_input("Purchase Price ($)", min_value=0.0, format="%.2f")
-                purchase_date = st.date_input("Purchase Date")
+                condition = st.selectbox(
+                    "Condition",
+                    ["Raw", "PSA 10", "PSA 9", "SGC 10", "SGC 9.5", "SGC 9"],
+                    index=0
+                )
             
-            notes = st.text_area("Notes")
+            # Second row with two columns
+            col4, col5 = st.columns(2)
+            
+            with col4:
+                purchase_price = st.number_input(
+                    "Purchase Price",
+                    min_value=0.0,
+                    step=0.01,
+                    value=float(card_data.get('price', 0))
+                )
+            
+            with col5:
+                purchase_date = st.date_input("Purchase Date", value=datetime.now().date())
+            
+            # Tags field spanning full width
             tags = st.text_input("Tags (comma-separated)", help="Add tags to help organize your collection")
             
-            submitted = st.form_submit_button("Add to Collection")
+            # Notes field spanning full width
+            notes = st.text_area("Notes", height=100)
             
-            if submitted:
-                try:
-                    # Handle image data
-                    photo_data = None
-                    if card_data.get('image_url'):
-                        try:
-                            st.write("Attempting to fetch image from:", card_data['image_url'])
-                            response = requests.get(card_data['image_url'], timeout=10)
-                            response.raise_for_status()
-                            
-                            # Check content type
-                            content_type = response.headers.get('content-type', '').lower()
-                            if 'image' not in content_type:
-                                st.warning(f"Invalid content type for image: {content_type}")
-                            else:
-                                # Convert to base64
-                                photo_data = f"data:image/jpeg;base64,{base64.b64encode(response.content).decode()}"
-                                st.write("Successfully converted image to base64")
-                        except requests.exceptions.RequestException as e:
-                            st.warning(f"Failed to fetch image: {str(e)}")
-                        except Exception as e:
-                            st.warning(f"Error processing image: {str(e)}")
-                    else:
-                        st.warning("No image URL provided")
-                    
-                    # Create new card entry
-                    new_card = pd.DataFrame([{
-                        'player_name': player_name,
-                        'year': year,
-                        'card_set': card_set,
-                        'card_number': card_number,
-                        'variation': variation,
-                        'condition': condition,
-                        'purchase_price': purchase_price,
-                        'purchase_date': purchase_date.strftime('%Y-%m-%d'),
-                        'current_value': market_data['metrics']['avg_price'],
-                        'last_updated': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-                        'notes': notes,
-                        'photo': photo_data,
-                        'roi': ((market_data['metrics']['avg_price'] - purchase_price) / purchase_price * 100) if purchase_price > 0 else 0,
-                        'tags': tags
-                    }])
-                    
-                    # Debug: Print new card data
-                    st.write("New card data:", new_card.to_dict('records'))
-                    
-                    # Add to collection
-                    if st.session_state.collection is None:
-                        st.session_state.collection = new_card
-                    else:
-                        st.session_state.collection = pd.concat([st.session_state.collection, new_card], ignore_index=True)
-                    
-                    # Save to Firebase immediately
-                    if save_collection_to_firebase(st.session_state.collection):
-                        st.success(f"""
-                            Card successfully added to your collection!
-                            - {card_data.get('title', '')}
-                            - Condition: {condition}
-                            - Purchase Price: ${purchase_price:.2f}
-                            - Current Market Value: ${market_data['metrics']['avg_price']:.2f}
-                        """)
-                        st.balloons()
-                        return True
-                    else:
-                        st.error("Failed to save card to Firebase. Please try again.")
-                        # Remove the card from session state since Firebase save failed
-                        if st.session_state.collection is not None:
-                            st.session_state.collection = st.session_state.collection.iloc[:-1]
-                        return False
-                except Exception as e:
-                    st.error(f"Error creating new card entry: {str(e)}")
-                    st.write("Debug: Error traceback:", traceback.format_exc())
-                    return False
+            # Submit button spanning full width
+            submitted = st.form_submit_button("Add to Collection", use_container_width=True)
+        
+        if submitted:
+            # Validate required fields
+            if not player_name or not year or not card_set:
+                st.error("Please fill in all required fields (Player Name, Year, Card Set)")
+                return False
+            
+            # Create card dictionary
+            card_dict = {
+                'player_name': player_name,
+                'year': year,
+                'card_set': card_set,
+                'card_number': card_number,
+                'variation': variation,
+                'condition': condition,
+                'purchase_price': purchase_price,
+                'purchase_date': purchase_date.strftime('%Y-%m-%d'),
+                'current_value': float(card_data.get('price', 0)),
+                'last_updated': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                'notes': notes,
+                'photo': card_data.get('image_url', ''),
+                'tags': [tag.strip() for tag in tags.split(',') if tag.strip()]
+            }
+            
+            # Add to collection
+            if save_card_to_collection(card_dict):
+                st.success("Card added to collection successfully!")
+                return True
+            else:
+                st.error("Failed to add card to collection")
+                return False
+    
     except Exception as e:
-        st.error(f"Error in add_to_collection: {str(e)}")
+        st.error(f"Error adding card to collection: {str(e)}")
+        import traceback
         st.write("Debug: Error traceback:", traceback.format_exc())
-        return False
+    return False
 
 def display_variations_grid(variation_groups):
     """Display cards in a responsive grid layout"""
@@ -401,7 +304,7 @@ def display_variations_grid(variation_groups):
                 
                 if group['representative_image']:
                     st.image(group['representative_image'], 
-                            use_column_width=True,
+                            use_container_width=True,
                             output_format="JPEG",
                             caption=group['variation_name'])
                 
@@ -596,191 +499,179 @@ def display_market_analysis(card_data, market_data):
         y_min = max(0, min_price - (price_range * 0.1))
         y_max = max_price + (price_range * 0.1)
         
-        # Update layout with improved styling
+        # Update layout
         fig.update_layout(
-            title='Historical Price Trend',
-            xaxis_title='Sale Date',
-            yaxis_title='Price ($)',
+            title="Historical Price Trend",
+            xaxis_title="Date",
+            yaxis_title="Price ($)",
+            yaxis_range=[y_min, y_max],
             hovermode='x unified',
             showlegend=True,
-            yaxis=dict(range=[y_min, y_max]),
-            height=500,
-            template='plotly_white',
-            plot_bgcolor='white',
-            paper_bgcolor='white',
-            margin=dict(l=50, r=50, t=50, b=50),
             legend=dict(
-                yanchor="top",
-                y=0.99,
-                xanchor="left",
-                x=0.01
+                orientation="h",
+                yanchor="bottom",
+                y=1.02,
+                xanchor="right",
+                x=1
             )
         )
         
-        # Add hover template
-        fig.update_traces(
-            hovertemplate="<br>".join([
-                "Date: %{x}",
-                "Price: $%{y:.2f}",
-                "<extra></extra>"
-            ])
+        # Display the plot
+        st.plotly_chart(fig, use_container_width=True)
+    
+    # Display price prediction
+    st.markdown("### Price Prediction")
+    predictor = PricePredictor()
+    predictions = predictor.predict_future_prices(card_data)
+    
+    if predictions and predictions['predicted_prices']:
+        # Calculate prediction ranges
+        current_price = df['price'].iloc[-1]  # Use last price since we're sorted ascending
+        avg_price = last_7_sales['price'].mean()
+        volatility_factor = price_std / avg_price
+        
+        # Calculate prediction ranges
+        short_term_range = volatility_factor * 0.5
+        long_term_range = volatility_factor * 1.0
+        
+        # Calculate trend direction and strength
+        price_trend = (current_price - avg_price) / avg_price
+        trend_strength = abs(price_trend)
+        
+        # Adjust predictions based on trend
+        if price_trend > 0:
+            short_term_multiplier = 1 + (trend_strength * 0.5)
+            long_term_multiplier = 1 + (trend_strength * 0.8)
+        else:
+            short_term_multiplier = 1 - (trend_strength * 0.5)
+            long_term_multiplier = 1 - (trend_strength * 0.8)
+        
+        # Calculate predictions
+        short_term_pred = avg_price * short_term_multiplier
+        long_term_pred = avg_price * long_term_multiplier
+        
+        # Display prediction metrics
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric(
+                "30-Day Forecast",
+                f"${short_term_pred:.2f}",
+                f"±{short_term_range*100:.1f}%"
+            )
+        with col2:
+            st.metric(
+                "90-Day Forecast",
+                f"${long_term_pred:.2f}",
+                f"±{long_term_range*100:.1f}%"
+            )
+        with col3:
+            confidence_score = max(1, min(10, (1 - volatility_factor) * 10))
+        st.metric(
+            "Confidence Score",
+            f"{confidence_score:.1f}/10",
+            help="Based on price stability and trend strength"
+        )
+        
+        # Create prediction chart
+        future_dates, _ = zip(*predictions['predicted_prices'])
+        fig = go.Figure()
+        
+        # Add historical prices
+        fig.add_trace(go.Scatter(
+            x=df['date'],
+            y=df['price'],
+            mode='markers+lines',
+            name='Historical Prices',
+            line=dict(color='blue', width=2),
+            marker=dict(size=6)
+        ))
+        
+        # Add average price line
+        fig.add_trace(go.Scatter(
+            x=df['date'],
+            y=[avg_price] * len(df['date']),
+            mode='lines',
+            name='Average Price',
+            line=dict(color='green', dash='dot', width=1)
+        ))
+        
+        # Add prediction line
+        fig.add_trace(go.Scatter(
+            x=future_dates,
+            y=[short_term_pred] * len(future_dates),
+            mode='lines',
+            name='Short-term Forecast',
+            line=dict(color='red', dash='dash', width=2)
+        ))
+        
+        # Add confidence intervals
+        fig.add_trace(go.Scatter(
+            x=future_dates,
+            y=[short_term_pred * (1 + short_term_range)] * len(future_dates),
+            mode='lines',
+            name='Upper Bound',
+            line=dict(color='red', dash='dot', width=1)
+        ))
+        
+        fig.add_trace(go.Scatter(
+            x=future_dates,
+            y=[short_term_pred * (1 - short_term_range)] * len(future_dates),
+            mode='lines',
+            name='Lower Bound',
+            line=dict(color='red', dash='dot', width=1),
+            fill='tonexty'
+        ))
+        
+        # Update layout
+        fig.update_layout(
+            title='Price History and Predictions',
+            xaxis_title='Date',
+            yaxis_title='Price ($)',
+            showlegend=True,
+            yaxis=dict(range=[y_min, y_max]),
+            height=500
         )
         
         st.plotly_chart(fig, use_container_width=True)
         
-        # Display price prediction
-        st.markdown("### Price Prediction")
-        predictor = PricePredictor()
-        predictions = predictor.predict_future_prices(card_data)
+        # Generate recommendations
+        if price_trend > 0:
+            if trend_strength > 0.1:
+                short_term_rec = "Strong upward trend - Consider buying"
+                long_term_rec = "Positive momentum - Good long-term hold"
+            else:
+                short_term_rec = "Moderate upward trend - Watch for entry point"
+                long_term_rec = "Stable growth - Consider holding"
+        else:
+            if trend_strength > 0.1:
+                short_term_rec = "Downward trend - Consider waiting"
+                long_term_rec = "Negative momentum - Monitor for bottom"
+            else:
+                short_term_rec = "Moderate decline - Look for stabilization"
+                long_term_rec = "Market weakness - Consider selling"
         
-        if predictions and predictions['predicted_prices']:
-            # Calculate prediction ranges
-            current_price = df['price'].iloc[-1]  # Use last price since we're sorted ascending
-            avg_price = last_7_sales['price'].mean()
-            volatility_factor = price_std / avg_price
+        # Display recommendations
+        st.markdown("### Market Recommendations")
+        
+        # Create a single container for recommendations
+        with st.container():
+            st.info(f"""
+            **Short-term (30 days):** {short_term_rec}
             
-            # Calculate prediction ranges
-            short_term_range = volatility_factor * 0.5
-            long_term_range = volatility_factor * 1.0
-            
-            # Calculate trend direction and strength
-            price_trend = (current_price - avg_price) / avg_price
-            trend_strength = abs(price_trend)
-            
-            # Adjust predictions based on trend
-            if price_trend > 0:
-                short_term_multiplier = 1 + (trend_strength * 0.5)
-                long_term_multiplier = 1 + (trend_strength * 0.8)
-            else:
-                short_term_multiplier = 1 - (trend_strength * 0.5)
-                long_term_multiplier = 1 - (trend_strength * 0.8)
-            
-            # Calculate predictions
-            short_term_pred = avg_price * short_term_multiplier
-            long_term_pred = avg_price * long_term_multiplier
-            
-            # Display prediction metrics
-            col1, col2, col3 = st.columns(3)
-            with col1:
-                st.metric(
-                    "30-Day Forecast",
-                    f"${short_term_pred:.2f}",
-                    f"±{short_term_range*100:.1f}%"
-                )
-            with col2:
-                st.metric(
-                    "90-Day Forecast",
-                    f"${long_term_pred:.2f}",
-                    f"±{long_term_range*100:.1f}%"
-                )
-            with col3:
-                confidence_score = max(1, min(10, (1 - volatility_factor) * 10))
-                st.metric(
-                    "Confidence Score",
-                    f"{confidence_score:.1f}/10",
-                    help="Based on price stability and trend strength"
-                )
-            
-            # Create prediction chart
-            future_dates, _ = zip(*predictions['predicted_prices'])
-            fig = go.Figure()
-            
-            # Add historical prices
-            fig.add_trace(go.Scatter(
-                x=df['date'],
-                y=df['price'],
-                mode='markers+lines',
-                name='Historical Prices',
-                line=dict(color='blue', width=2),
-                marker=dict(size=6)
-            ))
-            
-            # Add average price line
-            fig.add_trace(go.Scatter(
-                x=df['date'],
-                y=[avg_price] * len(df['date']),
-                mode='lines',
-                name='Average Price',
-                line=dict(color='green', dash='dot', width=1)
-            ))
-            
-            # Add prediction line
-            fig.add_trace(go.Scatter(
-                x=future_dates,
-                y=[short_term_pred] * len(future_dates),
-                mode='lines',
-                name='Short-term Forecast',
-                line=dict(color='red', dash='dash', width=2)
-            ))
-            
-            # Add confidence intervals
-            fig.add_trace(go.Scatter(
-                x=future_dates,
-                y=[short_term_pred * (1 + short_term_range)] * len(future_dates),
-                mode='lines',
-                name='Upper Bound',
-                line=dict(color='red', dash='dot', width=1)
-            ))
-            
-            fig.add_trace(go.Scatter(
-                x=future_dates,
-                y=[short_term_pred * (1 - short_term_range)] * len(future_dates),
-                mode='lines',
-                name='Lower Bound',
-                line=dict(color='red', dash='dot', width=1),
-                fill='tonexty'
-            ))
-            
-            # Update layout
-            fig.update_layout(
-                title='Price History and Predictions',
-                xaxis_title='Date',
-                yaxis_title='Price ($)',
-                showlegend=True,
-                yaxis=dict(range=[y_min, y_max]),
-                height=500
-            )
-            
-            st.plotly_chart(fig, use_container_width=True)
-            
-            # Generate recommendations
-            if price_trend > 0:
-                if trend_strength > 0.1:
-                    short_term_rec = "Strong upward trend - Consider buying"
-                    long_term_rec = "Positive momentum - Good long-term hold"
-                else:
-                    short_term_rec = "Moderate upward trend - Watch for entry point"
-                    long_term_rec = "Stable growth - Consider holding"
-            else:
-                if trend_strength > 0.1:
-                    short_term_rec = "Downward trend - Consider waiting"
-                    long_term_rec = "Negative momentum - Monitor for bottom"
-                else:
-                    short_term_rec = "Moderate decline - Look for stabilization"
-                    long_term_rec = "Market weakness - Consider selling"
-            
-            # Display recommendations
-            st.markdown("### Market Recommendations")
-            
-            # Create a single container for recommendations
-            with st.container():
-                st.info(f"""
-                **Short-term (30 days):** {short_term_rec}
-                
-                **Long-term (90 days):** {long_term_rec}
-                """)
-            
-            # Display profit calculator
-            display_profit_calculator(card_data, market_data)
-            
-            # Add detailed recommendations section
-            st.markdown("---")  # Visual separator
-            try:
-                display_recommendations(st.session_state.selected_card, market_data)
-            except Exception as e:
-                st.error(f"An error occurred in market analysis: {str(e)}")
-                print(f"Error in display_market_analysis: {str(e)}")
-                traceback.print_exc()
+            **Long-term (90 days):** {long_term_rec}
+            """)
+        
+        # Display profit calculator
+        display_profit_calculator(card_data, market_data)
+        
+        # Add detailed recommendations section
+        st.markdown("---")  # Visual separator
+        try:
+            display_recommendations(st.session_state.selected_card, market_data)
+        except Exception as e:
+            st.error(f"An error occurred in market analysis: {str(e)}")
+            print(f"Error in display_market_analysis: {str(e)}")
+            traceback.print_exc()
 
 def display_recommendations(card, market_data):
     """Display detailed recommendations for a card"""
@@ -818,80 +709,142 @@ def display_recommendations(card, market_data):
         st.metric(
             "Liquidity Score",
             f"{liquidity_score:.1f}/10",
-            help="Based on sales volume and market depth"
+            help="Based on trading volume and market depth"
         )
     
-    # Generate recommendations based on scores
+    # Buyer's Recommendations
+    st.markdown("#### Buyer's Perspective")
     if overall_score >= 8:
         st.success("Strong Buy Recommendation")
         st.markdown("""
-        - This card shows strong positive momentum
-        - Market is stable with good liquidity
-        - Consider buying for both short and long-term holds
+        🟢 **Optimal Buying Conditions**
+        - Market shows strong positive momentum
+        - High liquidity means easy entry and exit
+        - Price stability suggests good value retention
+        - Consider purchasing now before potential price increases
+        - Look for auctions ending soon for best deals
+        - Consider buying in bulk for better pricing
         """)
     elif overall_score >= 6:
         st.info("Moderate Buy Recommendation")
         st.markdown("""
-        - Card shows positive trends but with some volatility
-        - Market has decent liquidity
-        - Consider buying for long-term holds
+        🟡 **Favorable Buying Conditions**
+        - Market shows decent stability and liquidity
+        - Consider purchasing if the price aligns with your budget
+        - Monitor market trends for optimal entry point
+        - Look for cards with strong fundamentals
+        - Consider setting price alerts for dips
+        - Focus on well-graded examples
         """)
     elif overall_score >= 4:
-        st.warning("Hold Recommendation")
+        st.warning("Cautious Buy Recommendation")
         st.markdown("""
-        - Card shows mixed signals
-        - Market has moderate volatility
-        - Consider holding if already owned
+        🟡 **Selective Buying Opportunity**
+        - Market shows mixed signals
+        - Consider buying only if you find exceptional deals
+        - Focus on high-grade examples
+        - Set strict price limits
+        - Consider dollar-cost averaging
+        - Look for cards with strong long-term potential
         """)
     else:
-        st.error("Sell Recommendation")
+        st.error("Hold Recommendation")
         st.markdown("""
-        - Card shows negative trends
-        - Market is volatile with low liquidity
-        - Consider selling if owned
+        🔴 **Not Recommended for Buying**
+        - Market shows negative trends
+        - High volatility suggests price risk
+        - Limited liquidity may make selling difficult
+        - Consider waiting for market stabilization
+        - Focus on other opportunities
+        - Only buy if you find exceptional deals
         """)
+    
+    # Seller's Recommendations
+    st.markdown("#### Seller's Perspective")
+    if overall_score >= 8:
+        st.success("Strong Sell Recommendation")
+        st.markdown("""
+        🟢 **Optimal Selling Conditions**
+        - High market demand presents excellent selling opportunity
+        - Strong liquidity means quick sale potential
+        - Consider listing now to capitalize on current market conditions
+        - List at competitive prices for quick sale
+        - Consider auction format for maximum exposure
+        - Highlight card condition and grading details
+        """)
+    elif overall_score >= 6:
+        st.info("Moderate Sell Recommendation")
+        st.markdown("""
+        🟡 **Favorable Selling Conditions**
+        - Market conditions are decent for selling
+        - Consider listing if you're looking to exit
+        - Monitor market for optimal selling window
+        - Price competitively to attract buyers
+        - Consider fixed-price listings
+        - Highlight unique card features
+        """)
+    elif overall_score >= 4:
+        st.warning("Cautious Sell Recommendation")
+        st.markdown("""
+        🟡 **Selective Selling Opportunity**
+        - Market shows some uncertainty
+        - Consider holding unless you need to sell
+        - If selling, focus on high-grade examples
+        - Price slightly below market to attract buyers
+        - Consider longer listing durations
+        - Highlight card's long-term potential
+        """)
+    else:
+        st.error("Hold Recommendation")
+        st.markdown("""
+        🔴 **Not Recommended for Selling**
+        - Current market conditions are unfavorable
+        - High volatility may lead to suboptimal prices
+        - Limited liquidity may make selling difficult
+        - Consider waiting for market improvement
+        - Focus on other cards in your collection
+        - Only sell if absolutely necessary
+        """)
+    
+    # Market Commentary
+    st.markdown("#### Market Commentary")
+    commentary = f"""
+    The card shows a trend score of {trend_score:.1f}/10, indicating {'strong upward' if trend_score >= 7 else 'moderate upward' if trend_score >= 5 else 'stable' if trend_score >= 3 else 'downward'} momentum. 
+    With a liquidity score of {liquidity_score:.1f}/10, {'the market is highly liquid' if liquidity_score >= 7 else 'there is moderate liquidity' if liquidity_score >= 5 else 'liquidity is somewhat limited'}. 
+    The volatility score of {volatility_score:.1f}/10 suggests {'low' if volatility_score <= 3 else 'moderate' if volatility_score <= 7 else 'high'} price volatility.
+    """
+    st.markdown(commentary)
+    
+    # Risk Factors
+    st.markdown("#### Risk Factors to Consider")
+    st.warning("""
+    ⚠️ **Key Risk Factors:**
+    - Market volatility and trading volume
+    - Player performance and team dynamics
+    - Overall sports card market conditions
+    - Grading population changes
+    - Seasonal market fluctuations
+    - Economic conditions and collector sentiment
+    - Supply and demand dynamics
+    - Competition from similar cards
+    """)
 
 def save_collection_to_firebase(collection_df):
-    """Save the collection to Firebase for the current user"""
+    """Save the user's collection to Firebase"""
     try:
-        # Debug: Print input type and data
-        st.write("Debug: Input type:", type(collection_df))
-        st.write("Debug: Input data:", collection_df.head())
-        
-        # Convert DataFrame to list of dictionaries if needed
-        if isinstance(collection_df, pd.DataFrame):
-            cards_data = collection_df.to_dict('records')
-        else:
-            cards_data = collection_df
-            
         cards = []
-        
-        for idx, row in enumerate(cards_data):
+        for idx, row in collection_df.iterrows():
             try:
                 # Handle dates
                 purchase_date = row.get('purchase_date', '')
                 if not purchase_date or pd.isna(purchase_date):
                     purchase_date = datetime.now().isoformat()
-                elif isinstance(purchase_date, datetime):
-                    purchase_date = purchase_date.isoformat()
-                elif isinstance(purchase_date, str):
-                    try:
-                        datetime.fromisoformat(purchase_date)
-                    except ValueError:
-                        purchase_date = datetime.now().isoformat()
                 
                 last_updated = row.get('last_updated', '')
                 if not last_updated or pd.isna(last_updated):
                     last_updated = datetime.now().isoformat()
-                elif isinstance(last_updated, datetime):
-                    last_updated = last_updated.isoformat()
-                elif isinstance(last_updated, str):
-                    try:
-                        datetime.fromisoformat(last_updated)
-                    except ValueError:
-                        last_updated = datetime.now().isoformat()
                 
-                # Handle numeric values with better error handling
+                # Handle numeric values
                 try:
                     purchase_price = float(row.get('purchase_price', 0.0))
                     if pd.isna(purchase_price):
@@ -899,15 +852,15 @@ def save_collection_to_firebase(collection_df):
                 except (ValueError, TypeError) as e:
                     st.warning(f"Warning: Invalid purchase price for card {idx + 1}. Setting to 0.0. Error: {str(e)}")
                     purchase_price = 0.0
-                    
+                
                 try:
-                    current_value = float(row.get('current_value', purchase_price))
+                    current_value = float(row.get('current_value', 0.0))
                     if pd.isna(current_value):
-                        current_value = purchase_price
+                        current_value = 0.0
                 except (ValueError, TypeError) as e:
-                    st.warning(f"Warning: Invalid current value for card {idx + 1}. Using purchase price. Error: {str(e)}")
-                    current_value = purchase_price
-                    
+                    st.warning(f"Warning: Invalid current value for card {idx + 1}. Setting to 0.0. Error: {str(e)}")
+                    current_value = 0.0
+                
                 try:
                     roi = float(row.get('roi', 0.0))
                     if pd.isna(roi):
@@ -981,7 +934,6 @@ def save_collection_to_firebase(collection_df):
                 except Exception as card_error:
                     st.error(f"Error creating card object for card {idx + 1}: {str(card_error)}")
                     continue
-                    
             except Exception as card_error:
                 st.error(f"Error processing card {idx + 1}: {str(card_error)}")
                 continue
@@ -990,24 +942,18 @@ def save_collection_to_firebase(collection_df):
             st.error("No valid cards to save")
             return False
         
-        with st.spinner("Saving collection to database..."):
-            try:
+        try:
+            with st.spinner("Saving collection to database..."):
                 success = DatabaseService.save_user_collection(st.session_state.uid, cards)
                 if success:
                     st.success(f"Successfully saved {len(cards)} cards to your collection!")
-                    return True
-                else:
-                    st.error("Failed to save collection to database. Please try again.")
-                    return False
-            except Exception as save_error:
-                st.error(f"Error saving collection: {str(save_error)}")
-                import traceback
-                st.write("Debug: Error traceback:", traceback.format_exc())
-                return False
-        
+            return True
+        except Exception as save_error:
+            st.error(f"Error saving collection: {str(save_error)}")
+            st.write("Debug: Error traceback:", traceback.format_exc())
+            return False
     except Exception as e:
         st.error(f"Error in save_collection_to_firebase: {str(e)}")
-        import traceback
         st.write("Debug: Error traceback:", traceback.format_exc())
         return False
 
@@ -1145,7 +1091,7 @@ def display_image(image_url):
     if image_url:
         st.image(
             image_url,
-            use_column_width=True,
+            use_container_width=True,
             output_format="JPEG",
             caption="Card Image"
         )
@@ -1163,7 +1109,7 @@ def main():
     
     # If user is not logged in, redirect to login page
     if not st.session_state.user:
-        st.switch_page("pages/login.py")
+        st.switch_page("login")
     
     # Get user preferences with defaults
     user_preferences = st.session_state.preferences or {
