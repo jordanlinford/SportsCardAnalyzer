@@ -275,22 +275,42 @@ class DatabaseService:
     def save_user_display_cases(uid: str, display_cases: Dict) -> bool:
         """Save user's display cases to Firestore."""
         try:
+            print(f"\n=== Saving Display Cases to Firebase ===")
+            print(f"User ID: {uid}")
+            print(f"Number of display cases to save: {len(display_cases)}")
+            
+            if not uid:
+                print("ERROR: No user ID provided")
+                return False
+                
+            if not display_cases:
+                print("ERROR: No display cases to save")
+                return False
+            
             # Create a serializable copy of the display cases
             serializable_cases = {}
             for name, case in display_cases.items():
                 try:
+                    print(f"\nProcessing display case: {name}")
+                    print(f"Original case data: {case}")
+                    
                     # Process cards to ensure they're serializable
                     processed_cards = []
                     for card in case.get('cards', []):
-                        # Create a new dict with only serializable data
-                        processed_card = {}
-                        for key, value in card.items():
-                            if isinstance(value, (str, int, float, bool, list, dict, type(None))):
-                                processed_card[key] = value
-                            else:
-                                # Convert non-serializable types to string
-                                processed_card[key] = str(value)
-                        processed_cards.append(processed_card)
+                        try:
+                            # Create a new dict with only serializable data
+                            processed_card = {}
+                            for key, value in card.items():
+                                if isinstance(value, (str, int, float, bool, list, dict, type(None))):
+                                    processed_card[key] = value
+                                else:
+                                    # Convert non-serializable types to string
+                                    processed_card[key] = str(value)
+                            processed_cards.append(processed_card)
+                        except Exception as card_error:
+                            print(f"Error processing card: {str(card_error)}")
+                            print(f"Card data: {card}")
+                            continue
                     
                     # Create a serializable display case
                     serializable_case = {
@@ -302,37 +322,62 @@ class DatabaseService:
                         'cards': processed_cards
                     }
                     serializable_cases[name] = serializable_case
+                    print(f"Successfully processed display case: {name}")
                 except Exception as case_error:
                     print(f"Error processing display case {name}: {str(case_error)}")
+                    print(f"Case data: {case}")
                     continue
             
             if not serializable_cases:
-                print("No valid display cases to save after processing")
+                print("ERROR: No valid display cases to save after processing")
                 return False
             
             # Get the current document
             user_ref = db.collection('users').document(uid)
             user_doc = user_ref.get()
             
-            # Check if user document exists, if not create it
-            if not user_doc.exists:
-                print(f"User document for {uid} does not exist. Creating it now.")
-                # Create a basic user document
-                user_ref.set({
-                    'created_at': datetime.now().isoformat(),
-                    'updated_at': datetime.now().isoformat(),
-                    'display_cases': serializable_cases
-                })
-                print(f"Created new user document for {uid}")
-            else:
-                # Update only the display_cases field
-                user_ref.update({
-                    'display_cases': serializable_cases,
-                    'updated_at': datetime.now().isoformat()
-                })
-            
-            print(f"Successfully saved {len(serializable_cases)} display cases")
-            return True
+            try:
+                # If user document doesn't exist, create it with all required fields
+                if not user_doc.exists:
+                    print(f"User document for {uid} does not exist. Creating it now.")
+                    user_ref.set({
+                        'display_cases': serializable_cases,
+                        'created_at': datetime.now().isoformat(),
+                        'updated_at': datetime.now().isoformat(),
+                        'collection': [],  # Initialize empty collection
+                        'preferences': {
+                            'display_name': 'User',
+                            'theme': 'light',
+                            'currency': 'USD',
+                            'notifications': True,
+                            'default_sort': 'date_added',
+                            'default_view': 'grid',
+                            'price_alerts': False,
+                            'market_trends': True,
+                            'collection_stats': True
+                        }
+                    })
+                    print(f"Created new user document for {uid}")
+                else:
+                    # Get existing display cases
+                    existing_cases = user_doc.to_dict().get('display_cases', {})
+                    # Merge with new cases
+                    existing_cases.update(serializable_cases)
+                    # Update only the display_cases field
+                    user_ref.update({
+                        'display_cases': existing_cases,
+                        'updated_at': datetime.now().isoformat()
+                    })
+                    print(f"Updated display cases for user {uid}")
+                
+                print(f"Successfully saved {len(serializable_cases)} display cases")
+                return True
+            except Exception as save_error:
+                print(f"Error during Firebase save operation: {str(save_error)}")
+                print(f"Error type: {type(save_error).__name__}")
+                import traceback
+                print(f"Traceback: {traceback.format_exc()}")
+                return False
                 
         except Exception as e:
             print(f"Error in save_user_display_cases: {str(e)}")
