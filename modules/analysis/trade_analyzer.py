@@ -163,14 +163,34 @@ class TradeAnalyzer:
                 'avg_liquidity': 0.0
             }
         
-        total_trend = sum(float(card.get('trend_score', 0.0)) for card in cards)
+        # Calculate trend score based on market value changes
+        total_trend = 0.0
+        for card in cards:
+            try:
+                current_value = float(card.get('market_value', 0.0))
+                forecast_30d = float(card.get('30_day_forecast', current_value))
+                forecast_90d = float(card.get('90_day_forecast', current_value))
+                
+                # Calculate trend as percentage change
+                if current_value > 0:
+                    trend_30d = ((forecast_30d - current_value) / current_value) * 100
+                    trend_90d = ((forecast_90d - current_value) / current_value) * 100
+                    # Use weighted average of 30d and 90d trends
+                    card_trend = (trend_30d * 0.7) + (trend_90d * 0.3)
+                else:
+                    card_trend = 0.0
+                
+                total_trend += card_trend
+            except (ValueError, TypeError, ZeroDivisionError):
+                continue
+        
         total_volatility = sum(float(card.get('volatility_score', 5.0)) for card in cards)
         total_liquidity = sum(float(card.get('liquidity_score', 5.0)) for card in cards)
         
         return {
-            'avg_trend': round(total_trend / len(cards), 1),
-            'avg_volatility': round(total_volatility / len(cards), 1),
-            'avg_liquidity': round(total_liquidity / len(cards), 1)
+            'avg_trend': round(total_trend / len(cards), 1) if cards else 0.0,
+            'avg_volatility': round(total_volatility / len(cards), 1) if cards else 0.0,
+            'avg_liquidity': round(total_liquidity / len(cards), 1) if cards else 0.0
         }
     
     def _generate_recommendation(self,
@@ -183,23 +203,33 @@ class TradeAnalyzer:
         value_ratio = receiving_value / giving_value if giving_value > 0 else 0
         risk_difference = receiving_risk - giving_risk
         
+        # Calculate financial impact
+        value_difference = receiving_value - giving_value
+        value_difference_percent = (value_difference / giving_value * 100) if giving_value > 0 else 0
+        
         # Initialize recommendation components
         value_component = ""
         risk_component = ""
         trend_component = ""
         metrics_component = ""
+        financial_impact = ""
         
-        # Analyze value ratio
+        # Analyze value ratio and financial impact
         if value_ratio >= 1.2:
             value_component = "Receiving significantly more value"
+            financial_impact = f"Potential gain: ${value_difference:.2f} ({value_difference_percent:+.1f}%)"
         elif value_ratio >= 1.1:
             value_component = "Receiving more value"
+            financial_impact = f"Potential gain: ${value_difference:.2f} ({value_difference_percent:+.1f}%)"
         elif value_ratio >= 0.9:
             value_component = "Fair value"
+            financial_impact = f"Minimal financial impact: ${value_difference:.2f} ({value_difference_percent:+.1f}%)"
         elif value_ratio >= 0.8:
             value_component = "Receiving slightly less value"
+            financial_impact = f"Potential loss: ${abs(value_difference):.2f} ({value_difference_percent:+.1f}%)"
         else:
             value_component = "Receiving significantly less value"
+            financial_impact = f"Significant potential loss: ${abs(value_difference):.2f} ({value_difference_percent:+.1f}%)"
         
         # Analyze risk difference
         if risk_difference <= -2:
@@ -230,27 +260,69 @@ class TradeAnalyzer:
         if metrics_insights:
             metrics_component = f"Note: {', '.join(metrics_insights)} in cards you're receiving"
         
-        # Generate final recommendation
+        # Generate final recommendation with financial impact
         if value_ratio >= 1.2 and risk_difference <= 2:
             recommendation = "Strong Accept"
+            recommendation_details = (
+                f"Strong Accept - {value_component} {risk_component}. "
+                f"{financial_impact}. "
+                f"{trend_component}. "
+                f"{metrics_component}. "
+                "This trade presents a significant opportunity for value appreciation with manageable risk."
+            )
         elif value_ratio >= 1.1 and risk_difference <= 1:
             recommendation = "Accept"
+            recommendation_details = (
+                f"Accept - {value_component} {risk_component}. "
+                f"{financial_impact}. "
+                f"{trend_component}. "
+                f"{metrics_component}. "
+                "This trade offers good value with reasonable risk."
+            )
         elif value_ratio >= 0.9 and risk_difference <= 0:
             recommendation = "Consider"
+            recommendation_details = (
+                f"Consider - {value_component} {risk_component}. "
+                f"{financial_impact}. "
+                f"{trend_component}. "
+                f"{metrics_component}. "
+                "This trade is fair but may not offer significant advantages."
+            )
         elif value_ratio >= 0.8 and risk_difference <= -2:
             recommendation = "Consider"
+            recommendation_details = (
+                f"Consider - {value_component} {risk_component}. "
+                f"{financial_impact}. "
+                f"{trend_component}. "
+                f"{metrics_component}. "
+                "The lower risk profile may justify the slight value difference."
+            )
         elif value_ratio < 0.8:
             recommendation = "Decline"
+            recommendation_details = (
+                f"Decline - {value_component} {risk_component}. "
+                f"{financial_impact}. "
+                f"{trend_component}. "
+                f"{metrics_component}. "
+                "The significant value loss makes this trade unfavorable."
+            )
         elif risk_difference > 2:
             recommendation = "Decline"
+            recommendation_details = (
+                f"Decline - {value_component} {risk_component}. "
+                f"{financial_impact}. "
+                f"{trend_component}. "
+                f"{metrics_component}. "
+                "The high risk profile outweighs any potential value gains."
+            )
         else:
             recommendation = "Consider"
+            recommendation_details = (
+                f"Consider - {value_component} {risk_component}. "
+                f"{financial_impact}. "
+                f"{trend_component}. "
+                f"{metrics_component}. "
+                "This trade presents a balanced opportunity that requires careful consideration."
+            )
         
-        # Combine detailed analysis
-        details = f"{value_component} {risk_component}. "
-        if trend_component:
-            details += f"{trend_component}. "
-        if metrics_component:
-            details += f"{metrics_component}."
-        
-        return recommendation, details.strip() 
+        return recommendation, recommendation_details.strip() 
