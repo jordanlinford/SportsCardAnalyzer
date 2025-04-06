@@ -85,15 +85,15 @@ class DatabaseService:
                 try:
                     # Handle both Card objects and dictionary records
                     if isinstance(card, dict):
-                        # Validate photo data
+                        # Handle photo data
                         photo = card.get('photo', '')
                         if photo:
                             try:
-                                # Validate base64 string format
-                                if not photo.startswith('data:image'):
+                                # Accept both base64 and URL formats
+                                if not (photo.startswith('data:image') or photo.startswith('http')):
                                     print(f"Warning: Invalid photo data format for card {card.get('player_name', 'Unknown')}")
                                     photo = ''
-                                else:
+                                elif photo.startswith('data:image'):
                                     # Validate base64 content
                                     try:
                                         base64_part = photo.split(',')[1]
@@ -128,15 +128,15 @@ class DatabaseService:
                             'tags': [str(tag) for tag in card.get('tags', [])]
                         }
                     else:
-                        # Validate photo data for Card object
+                        # Handle photo data for Card object
                         photo = card.photo
                         if photo:
                             try:
-                                # Validate base64 string format
-                                if not photo.startswith('data:image'):
+                                # Accept both base64 and URL formats
+                                if not (photo.startswith('data:image') or photo.startswith('http')):
                                     print(f"Warning: Invalid photo data format for card {card.player_name}")
                                     photo = ''
-                                else:
+                                elif photo.startswith('data:image'):
                                     # Validate base64 content
                                     try:
                                         base64_part = photo.split(',')[1]
@@ -198,6 +198,7 @@ class DatabaseService:
                         'updated_at': datetime.now().isoformat()
                     })
                     print(f"Successfully updated collection with {len(collection_data)} cards")
+                    return True
                 else:
                     # Create new collection
                     db.collection('users').document(uid).set({
@@ -206,13 +207,12 @@ class DatabaseService:
                         'updated_at': datetime.now().isoformat()
                     })
                     print(f"Successfully created new collection with {len(collection_data)} cards")
-                return True
-            except Exception as save_error:
-                print(f"Error saving to Firestore: {str(save_error)}")
+                    return True
+            except Exception as e:
+                print(f"Error saving collection to Firestore: {str(e)}")
                 import traceback
                 print(f"Traceback: {traceback.format_exc()}")
                 return False
-
         except Exception as e:
             print(f"Error in save_user_collection: {str(e)}")
             import traceback

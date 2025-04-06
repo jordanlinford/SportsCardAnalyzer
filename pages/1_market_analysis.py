@@ -277,47 +277,87 @@ def add_to_collection(card_data, market_data):
         st.error(f"Error adding card to collection: {str(e)}")
         import traceback
         st.write("Debug: Error traceback:", traceback.format_exc())
-    return False
+        return False
+
+def redirect_to_collection_manager(card_data):
+    """Redirect to collection manager with pre-populated card data"""
+    try:
+        # Store the card data in session state
+        st.session_state.prefilled_card = {
+            'player_name': st.session_state.search_params.get('player_name', ''),
+            'year': re.search(r'\b\d{4}\b', card_data['title']).group(0) if re.search(r'\b\d{4}\b', card_data['title']) else '',
+            'card_set': re.search(rf'{st.session_state.search_params.get("year", "")}\s+(.*?)(?:\s+#|\s+Card|\s+RC|\s+Rookie|\s+PSA|\s+SGC|\s+BGS|$)', card_data['title']).group(1) if re.search(rf'{st.session_state.search_params.get("year", "")}\s+(.*?)(?:\s+#|\s+Card|\s+RC|\s+Rookie|\s+PSA|\s+SGC|\s+BGS|$)', card_data['title']) else '',
+            'card_number': re.search(r'#(\d+)', card_data['title']).group(1) if re.search(r'#(\d+)', card_data['title']) else '',
+            'variation': next((term for term in ['Parallel', 'Refractor', 'Prizm', 'Holo', 'Gold', 'Silver', 'Bronze', 'Red', 'Blue', 'Green', 'Yellow', 'Purple', 'Orange', 'Pink'] if term.lower() in card_data['title'].lower()), ''),
+            'purchase_price': float(card_data.get('price', 0)),
+            'photo': card_data.get('image_url', ''),
+            'current_value': float(card_data.get('price', 0))
+        }
+        
+        # Set the current tab to "Add Card"
+        st.session_state.current_tab = "Add Card"
+        
+        # Redirect to collection manager
+        st.switch_page("pages/3_collection_manager.py")
+    
+    except Exception as e:
+        st.error(f"Error redirecting to collection manager: {str(e)}")
+        import traceback
+        st.write("Debug: Error traceback:", traceback.format_exc())
+        return False
 
 def display_variations_grid(variation_groups):
     """Display cards in a responsive grid layout"""
-    # Use a 2-column layout that stacks on mobile
-    cols = st.columns(2)
-    for idx, (variation_key, group) in enumerate(variation_groups.items()):
-        col = cols[idx % 2]
-        with col:
-            with st.container():
-                # Calculate price statistics for this variation
-                prices = [card['price'] for card in group['cards']]
-                min_price = min(prices)
-                max_price = max(prices)
-                median_price = sum(prices) / len(prices)
-                
-                st.markdown(f"""
-                <div class="variation-card">
-                    <h4>{group['variation_name']}</h4>
-                    <p>Found: {group['count']} listings</p>
-                    <p>Price Range: ${min_price:.2f} - ${max_price:.2f}</p>
-                    <p>Median Price: ${median_price:.2f}</p>
-                </div>
-                """, unsafe_allow_html=True)
-                
-                if group['representative_image']:
-                    st.image(group['representative_image'], 
-                            use_container_width=True,
-                            output_format="JPEG",
-                            caption=group['variation_name'])
-                
-                if st.button("View Details", 
-                         key=f"select_variation_{idx}",
-                         use_container_width=True):
-                    # When button is clicked, update session state with the entire group
-                    st.session_state.selected_variation = group
-                    st.session_state.selected_card = group['cards'][0]  # Keep the first card for display purposes
-                    # Calculate market data for the selected variation
-                    analyzer = MarketAnalyzer()
-                    st.session_state.market_data = analyzer.analyze_market_data(group['cards'])
-                    st.rerun()
+    try:
+        # Use a 2-column layout that stacks on mobile
+        cols = st.columns(2)
+        for idx, (variation_key, group) in enumerate(variation_groups.items()):
+            col = cols[idx % 2]
+            with col:
+                with st.container():
+                    # Calculate price statistics for this variation
+                    prices = [card['price'] for card in group['cards']]
+                    min_price = min(prices)
+                    max_price = max(prices)
+                    median_price = sum(prices) / len(prices)
+                    
+                    st.markdown(f"""
+                    <div class="variation-card">
+                        <h4>{group['variation_name']}</h4>
+                        <p>Found: {group['count']} listings</p>
+                        <p>Price Range: ${min_price:.2f} - ${max_price:.2f}</p>
+                        <p>Median Price: ${median_price:.2f}</p>
+                    </div>
+                    """, unsafe_allow_html=True)
+                    
+                    if group['representative_image']:
+                        st.image(group['representative_image'], 
+                                use_container_width=True,
+                                output_format="JPEG",
+                                caption=group['variation_name'])
+                    
+                    if st.button("View Details", 
+                             key=f"select_variation_{idx}",
+                             use_container_width=True):
+                        # When button is clicked, update session state with the entire group
+                        st.session_state.selected_variation = group
+                        st.session_state.selected_card = group['cards'][0]  # Keep the first card for display purposes
+                        # Calculate market data for the selected variation
+                        analyzer = MarketAnalyzer()
+                        st.session_state.market_data = analyzer.analyze_market_data(group['cards'])
+                        st.rerun()
+                    
+                    # Add "Add to Collection" button
+                    if st.button("Add to Collection",
+                              key=f"add_to_collection_{idx}",
+                              use_container_width=True):
+                        redirect_to_collection_manager(group['cards'][0])
+    
+    except Exception as e:
+        st.error(f"Error displaying variations grid: {str(e)}")
+        import traceback
+        st.write("Debug: Error traceback:", traceback.format_exc())
+        return False
 
 def display_sales_log(df):
     """Display a log of recent sales."""
@@ -358,7 +398,7 @@ def display_market_analysis(card_data, market_data):
     if not card_data or len(card_data) == 0:
         st.warning("No valid market data available for analysis.")
         return
-        
+    
     # Initialize DataFrame
     if 'selected_variation' in st.session_state and st.session_state.selected_variation:
         df = pd.DataFrame(st.session_state.selected_variation['cards'])
@@ -518,160 +558,98 @@ def display_market_analysis(card_data, market_data):
         
         # Display the plot
         st.plotly_chart(fig, use_container_width=True)
-    
-    # Display price prediction
-    st.markdown("### Price Prediction")
-    predictor = PricePredictor()
-    predictions = predictor.predict_future_prices(card_data)
-    
-    if predictions and predictions['predicted_prices']:
-        # Calculate prediction ranges
-        current_price = df['price'].iloc[-1]  # Use last price since we're sorted ascending
-        avg_price = last_7_sales['price'].mean()
-        volatility_factor = price_std / avg_price
         
-        # Calculate prediction ranges
-        short_term_range = volatility_factor * 0.5
-        long_term_range = volatility_factor * 1.0
+        # Display price prediction
+        st.markdown("### Price Prediction")
+        predictor = PricePredictor()
+        predictions = predictor.predict_future_prices(card_data)
         
-        # Calculate trend direction and strength
-        price_trend = (current_price - avg_price) / avg_price
-        trend_strength = abs(price_trend)
-        
-        # Adjust predictions based on trend
-        if price_trend > 0:
-            short_term_multiplier = 1 + (trend_strength * 0.5)
-            long_term_multiplier = 1 + (trend_strength * 0.8)
-        else:
-            short_term_multiplier = 1 - (trend_strength * 0.5)
-            long_term_multiplier = 1 - (trend_strength * 0.8)
-        
-        # Calculate predictions
-        short_term_pred = avg_price * short_term_multiplier
-        long_term_pred = avg_price * long_term_multiplier
-        
-        # Display prediction metrics
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            st.metric(
-                "30-Day Forecast",
-                f"${short_term_pred:.2f}",
-                f"±{short_term_range*100:.1f}%"
-            )
-        with col2:
-            st.metric(
-                "90-Day Forecast",
-                f"${long_term_pred:.2f}",
-                f"±{long_term_range*100:.1f}%"
-            )
-        with col3:
-            confidence_score = max(1, min(10, (1 - volatility_factor) * 10))
-        st.metric(
-            "Confidence Score",
-            f"{confidence_score:.1f}/10",
-            help="Based on price stability and trend strength"
-        )
-        
-        # Create prediction chart
-        future_dates, _ = zip(*predictions['predicted_prices'])
-        fig = go.Figure()
-        
-        # Add historical prices
-        fig.add_trace(go.Scatter(
-            x=df['date'],
-            y=df['price'],
-            mode='markers+lines',
-            name='Historical Prices',
-            line=dict(color='blue', width=2),
-            marker=dict(size=6)
-        ))
-        
-        # Add average price line
-        fig.add_trace(go.Scatter(
-            x=df['date'],
-            y=[avg_price] * len(df['date']),
-            mode='lines',
-            name='Average Price',
-            line=dict(color='green', dash='dot', width=1)
-        ))
-        
-        # Add prediction line
-        fig.add_trace(go.Scatter(
-            x=future_dates,
-            y=[short_term_pred] * len(future_dates),
-            mode='lines',
-            name='Short-term Forecast',
-            line=dict(color='red', dash='dash', width=2)
-        ))
-        
-        # Add confidence intervals
-        fig.add_trace(go.Scatter(
-            x=future_dates,
-            y=[short_term_pred * (1 + short_term_range)] * len(future_dates),
-            mode='lines',
-            name='Upper Bound',
-            line=dict(color='red', dash='dot', width=1)
-        ))
-        
-        fig.add_trace(go.Scatter(
-            x=future_dates,
-            y=[short_term_pred * (1 - short_term_range)] * len(future_dates),
-            mode='lines',
-            name='Lower Bound',
-            line=dict(color='red', dash='dot', width=1),
-            fill='tonexty'
-        ))
-        
-        # Update layout
-        fig.update_layout(
-            title='Price History and Predictions',
-            xaxis_title='Date',
-            yaxis_title='Price ($)',
-            showlegend=True,
-            yaxis=dict(range=[y_min, y_max]),
-            height=500
-        )
-        
-        st.plotly_chart(fig, use_container_width=True)
-        
-        # Generate recommendations
-        if price_trend > 0:
-            if trend_strength > 0.1:
-                short_term_rec = "Strong upward trend - Consider buying"
-                long_term_rec = "Positive momentum - Good long-term hold"
-            else:
-                short_term_rec = "Moderate upward trend - Watch for entry point"
-                long_term_rec = "Stable growth - Consider holding"
-        else:
-            if trend_strength > 0.1:
-                short_term_rec = "Downward trend - Consider waiting"
-                long_term_rec = "Negative momentum - Monitor for bottom"
-            else:
-                short_term_rec = "Moderate decline - Look for stabilization"
-                long_term_rec = "Market weakness - Consider selling"
-        
-        # Display recommendations
-        st.markdown("### Market Recommendations")
-        
-        # Create a single container for recommendations
-        with st.container():
-            st.info(f"""
-            **Short-term (30 days):** {short_term_rec}
+        if predictions and predictions['predicted_prices']:
+            # Calculate prediction ranges
+            current_price = df['price'].iloc[-1]  # Use last price since we're sorted ascending
+            avg_price = last_7_sales['price'].mean()
+            volatility_factor = price_std / avg_price
             
-            **Long-term (90 days):** {long_term_rec}
-            """)
-        
-        # Display profit calculator
-        display_profit_calculator(card_data, market_data)
-        
-        # Add detailed recommendations section
-        st.markdown("---")  # Visual separator
-        try:
-            display_recommendations(st.session_state.selected_card, market_data)
-        except Exception as e:
-            st.error(f"An error occurred in market analysis: {str(e)}")
-            print(f"Error in display_market_analysis: {str(e)}")
-            traceback.print_exc()
+            # Calculate prediction ranges
+            short_term_range = volatility_factor * 0.5
+            long_term_range = volatility_factor * 1.0
+            
+            # Calculate trend direction and strength
+            price_trend = (current_price - avg_price) / avg_price
+            trend_strength = abs(price_trend)
+            
+            # Adjust predictions based on trend
+            if price_trend > 0:
+                short_term_multiplier = 1 + (trend_strength * 0.5)
+                long_term_multiplier = 1 + (trend_strength * 0.8)
+            else:
+                short_term_multiplier = 1 - (trend_strength * 0.5)
+                long_term_multiplier = 1 - (trend_strength * 0.8)
+            
+            # Calculate predictions
+            short_term_pred = avg_price * short_term_multiplier
+            long_term_pred = avg_price * long_term_multiplier
+            
+            # Display prediction metrics
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                st.metric(
+                    "30-Day Forecast",
+                    f"${short_term_pred:.2f}",
+                    f"±{short_term_range*100:.1f}%"
+                )
+            with col2:
+                st.metric(
+                    "90-Day Forecast",
+                    f"${long_term_pred:.2f}",
+                    f"±{long_term_range*100:.1f}%"
+                )
+            with col3:
+                confidence_score = max(1, min(10, (1 - volatility_factor) * 10))
+                st.metric(
+                    "Confidence Score",
+                    f"{confidence_score:.1f}/10",
+                    help="Based on price stability and trend strength"
+                )
+            
+            # Generate recommendations
+            if price_trend > 0:
+                if trend_strength > 0.1:
+                    short_term_rec = "Strong upward trend - Consider buying"
+                    long_term_rec = "Positive momentum - Good long-term hold"
+                else:
+                    short_term_rec = "Moderate upward trend - Watch for entry point"
+                    long_term_rec = "Stable growth - Consider holding"
+            else:
+                if trend_strength > 0.1:
+                    short_term_rec = "Downward trend - Consider waiting"
+                    long_term_rec = "Negative momentum - Monitor for bottom"
+                else:
+                    short_term_rec = "Moderate decline - Look for stabilization"
+                    long_term_rec = "Market weakness - Consider selling"
+            
+            # Display recommendations
+            st.markdown("### Market Recommendations")
+            
+            # Create a single container for recommendations
+            with st.container():
+                st.info(f"""
+                **Short-term (30 days):** {short_term_rec}
+                
+                **Long-term (90 days):** {long_term_rec}
+                """)
+            
+            # Display profit calculator
+            display_profit_calculator(card_data, market_data)
+            
+            # Add detailed recommendations section
+            st.markdown("---")  # Visual separator
+            try:
+                display_recommendations(st.session_state.selected_card, market_data)
+            except Exception as e:
+                st.error(f"An error occurred in market analysis: {str(e)}")
+                print(f"Error in display_market_analysis: {str(e)}")
+                traceback.print_exc()
 
 def display_recommendations(card, market_data):
     """Display detailed recommendations for a card"""
@@ -1189,10 +1167,7 @@ def main():
         
         with col2:
             if st.button("Add to Collection", use_container_width=True):
-                st.subheader("Add Card to Collection")
-                if add_to_collection(st.session_state.selected_card, st.session_state.market_data):
-                    reset_session_state()
-                    st.rerun()
+                redirect_to_collection_manager(st.session_state.selected_card)
 
 if __name__ == "__main__":
     main() 

@@ -147,15 +147,22 @@ def search_card_details(player_name, year, card_set, card_number, variation, con
 
 def display_add_card_form():
     """Display form for adding a new card"""
+    # Check if we have pre-populated data from market analysis
+    if 'prefilled_card' in st.session_state:
+        st.info("Card details pre-populated from market analysis. Please review and complete the form.")
+    
     with st.form("add_card_form"):
         col1, col2 = st.columns(2)
         
         with col1:
-            player_name = st.text_input("Player Name", key="player_name")
-            year = st.text_input("Year", key="year")
-            card_set = st.text_input("Card Set", key="card_set")
-            card_number = st.text_input("Card Number", key="card_number")
-            variation = st.text_input("Variation", key="variation")
+            # Get pre-populated data if available
+            prefilled = st.session_state.get('prefilled_card', {})
+            
+            player_name = st.text_input("Player Name", value=prefilled.get('player_name', ''), key="player_name")
+            year = st.text_input("Year", value=prefilled.get('year', ''), key="year")
+            card_set = st.text_input("Card Set", value=prefilled.get('card_set', ''), key="card_set")
+            card_number = st.text_input("Card Number", value=prefilled.get('card_number', ''), key="card_number")
+            variation = st.text_input("Variation", value=prefilled.get('variation', ''), key="variation")
         
         with col2:
             condition = st.selectbox(
@@ -163,12 +170,32 @@ def display_add_card_form():
                 ["Raw", "PSA 1", "PSA 2", "PSA 3", "PSA 4", "PSA 5", "PSA 6", "PSA 7", "PSA 8", "PSA 9", "PSA 10", "Graded Other"],
                 key="condition"
             )
-            purchase_price = st.number_input("Purchase Price", min_value=0.0, step=0.01, key="purchase_price")
-            purchase_date = st.date_input("Purchase Date", key="purchase_date")
+            
+            purchase_price = st.number_input(
+                "Purchase Price", 
+                min_value=0.0, 
+                step=0.01, 
+                value=float(prefilled.get('purchase_price', 0)), 
+                key="purchase_price"
+            )
+            
+            current_value = st.number_input(
+                "Current Value", 
+                min_value=0.0, 
+                step=0.01, 
+                value=float(prefilled.get('current_value', 0)), 
+                key="current_value"
+            )
+            
+            purchase_date = st.date_input("Purchase Date", value=datetime.now().date(), key="purchase_date")
             notes = st.text_area("Notes", key="notes")
             tags = st.text_input("Tags (comma-separated)", key="tags")
         
-        photo = st.file_uploader("Upload Photo", type=["jpg", "jpeg", "png"], key="photo")
+        # Display pre-populated image if available
+        if prefilled.get('photo'):
+            st.image(prefilled['photo'], caption="Card Image from Market Analysis", use_container_width=True)
+        else:
+            photo = st.file_uploader("Upload Photo", type=["jpg", "jpeg", "png"], key="photo")
         
         submitted = st.form_submit_button("Add Card")
         
@@ -176,61 +203,55 @@ def display_add_card_form():
             # Validate required fields
             if not player_name or not year or not card_set:
                 st.error("Please fill in all required fields (Player Name, Year, Card Set)")
-                return False, None
+                return
             
-            # Get current value
-            card_details = search_card_details(
-                player_name,
-                year,
-                card_set,
-                card_number,
-                variation,
-                condition
-            )
+            try:
+                # Create new card
+                new_card = {
+                    'player_name': player_name,
+                    'year': year,
+                    'card_set': card_set,
+                    'card_number': card_number,
+                    'variation': variation,
+                    'condition': condition,
+                    'purchase_price': float(purchase_price),
+                    'current_value': float(current_value),
+                    'purchase_date': purchase_date.strftime('%Y-%m-%d'),
+                    'notes': notes,
+                    'tags': [tag.strip() for tag in tags.split(',') if tag.strip()],
+                    'last_updated': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                }
+                
+                # Handle photo
+                if prefilled.get('photo'):
+                    new_card['photo'] = prefilled['photo']
+                elif photo:
+                    # Convert uploaded photo to base64
+                    photo_bytes = photo.read()
+                    photo_base64 = base64.b64encode(photo_bytes).decode('utf-8')
+                    new_card['photo'] = f"data:image/{photo.type.split('/')[-1]};base64,{photo_base64}"
+                
+                # Add card to collection
+                if 'collection' not in st.session_state:
+                    st.session_state.collection = []
+                
+                st.session_state.collection.append(new_card)
+                
+                # Save to Firebase
+                if DatabaseService.save_user_collection(st.session_state.uid, st.session_state.collection):
+                    st.success("Card added successfully!")
+                    # Clear pre-populated data
+                    if 'prefilled_card' in st.session_state:
+                        del st.session_state.prefilled_card
+                    # Switch back to View Collection tab
+                    st.session_state.current_tab = "View Collection"
+                    st.rerun()
+                else:
+                    st.error("Failed to save card to database. Please try again.")
             
-            if not card_details:
-                st.error("Could not determine current value for this card")
-                return False, None
-            
-            # Create card dictionary
-            card_data = {
-                'player_name': player_name,
-                'year': year,
-                'card_set': card_set,
-                'card_number': card_number,
-                'variation': variation,
-                'condition': condition,
-                'purchase_price': purchase_price,
-                'purchase_date': purchase_date.strftime('%Y-%m-%d'),
-                'current_value': card_details['current_value'],
-                'last_updated': card_details['last_updated'],
-                'notes': notes,
-                'photo': '',
-                'roi': ((card_details['current_value'] - purchase_price) / purchase_price * 100) if purchase_price > 0 else 0,
-                'tags': [tag.strip() for tag in tags.split(',') if tag.strip()]
-            }
-            
-            # Handle photo upload
-            if photo:
-                try:
-                    # Process image with PIL
-                    img = Image.open(photo)
-                    # Resize to smaller dimensions
-                    img.thumbnail((400, 500))
-                    # Convert to RGB if necessary
-                    if img.mode != 'RGB':
-                        img = img.convert('RGB')
-                    # Save with higher compression
-                    buffer = BytesIO()
-                    img.save(buffer, format="JPEG", quality=50, optimize=True)
-                    encoded_image = base64.b64encode(buffer.getvalue()).decode()
-                    card_data['photo'] = f"data:image/jpeg;base64,{encoded_image}"
-                except Exception as e:
-                    st.warning(f"Warning: Could not process uploaded image. Error: {str(e)}")
-            
-            return True, card_data
-        
-        return False, None
+            except Exception as e:
+                st.error(f"Error adding card: {str(e)}")
+                st.write("Debug: Error traceback:", traceback.format_exc())
 
 def generate_share_link(collection_data):
     """Generate a shareable link for the collection"""
@@ -596,9 +617,21 @@ def save_collection_to_firebase(collection_df):
                         if photo.startswith('data:image'):
                             # Already in base64 format
                             photo_data = photo
+                            st.write(f"Debug: Using existing base64 image for card {idx + 1}")
                         elif photo.startswith('http'):
                             # Valid URL, keep as is
-                            photo_data = photo
+                            try:
+                                # Test the URL before saving
+                                response = requests.head(photo, timeout=5)
+                                if response.status_code == 200:
+                                    photo_data = photo
+                                    st.write(f"Debug: Using valid image URL for card {idx + 1}")
+                                else:
+                                    st.warning(f"Warning: Invalid image URL status code {response.status_code} for card {idx + 1}")
+                                    photo_data = "https://placehold.co/300x400/e6e6e6/666666.png?text=Invalid+URL"
+                            except Exception as e:
+                                st.warning(f"Warning: Failed to validate image URL for card {idx + 1}: {str(e)}")
+                                photo_data = "https://placehold.co/300x400/e6e6e6/666666.png?text=URL+Error"
                         else:
                             try:
                                 # Try to load the image URL
@@ -609,8 +642,12 @@ def save_collection_to_firebase(collection_df):
                                     # Convert to base64
                                     photo_data = f"data:image/jpeg;base64,{base64.b64encode(response.content).decode()}"
                                     st.write(f"Debug: Successfully converted image URL to base64 for card {idx + 1}")
+                                else:
+                                    st.warning(f"Warning: Invalid content type {content_type} for card {idx + 1}")
+                                    photo_data = "https://placehold.co/300x400/e6e6e6/666666.png?text=Invalid+Content"
                             except Exception as e:
-                                st.warning(f"Failed to process image URL: {str(e)}")
+                                st.warning(f"Warning: Failed to process image URL for card {idx + 1}: {str(e)}")
+                                photo_data = "https://placehold.co/300x400/e6e6e6/666666.png?text=URL+Error"
                     else:
                         try:
                             # Handle file upload object
@@ -619,6 +656,7 @@ def save_collection_to_firebase(collection_df):
                             st.write(f"Debug: Successfully converted uploaded image to base64 for card {idx + 1}")
                         except Exception as photo_error:
                             st.warning(f"Warning: Could not process photo for card {idx + 1}. Error: {str(photo_error)}")
+                            photo_data = "https://placehold.co/300x400/e6e6e6/666666.png?text=Upload+Error"
                 
                 # Handle tags
                 tags = row.get('tags', '')
@@ -773,6 +811,15 @@ def has_cards(collection):
         return len(collection) > 0
     return False
 
+def safe_get(card, key, default=None):
+    """Safely get a value from a card, whether it's a Card object or dictionary."""
+    if hasattr(card, 'to_dict'):
+        card_dict = card.to_dict()
+        return card_dict.get(key, default)
+    elif isinstance(card, dict):
+        return card.get(key, default)
+    return default
+
 def main():
     """Main function for the collection manager page"""
     init_session_state()
@@ -802,21 +849,7 @@ def main():
     # Tab 1: Add Cards
     with tab1:
         st.subheader("Add New Card")
-        submitted, card_data = display_add_card_form()
-        
-        if submitted and card_data:
-            # Add new card to collection
-            if isinstance(st.session_state.collection, list):
-                st.session_state.collection.append(card_data)
-            else:
-                st.session_state.collection = [card_data]
-            
-            # Save to Firebase
-            if save_collection_to_firebase(st.session_state.collection):
-                st.success("Card added successfully!")
-                st.balloons()
-            else:
-                st.error("Failed to save card to collection.")
+        display_add_card_form()
     
     # Tab 2: View Collection
     with tab2:
@@ -909,22 +942,22 @@ def main():
             if player_filter:
                 filtered_collection = [
                     card for card in filtered_collection
-                    if player_filter.lower() in str(card.get('player_name', '')).lower()
+                    if player_filter.lower() in str(safe_get(card, 'player_name', '')).lower()
                 ]
             if year_filter:
                 filtered_collection = [
                     card for card in filtered_collection
-                    if year_filter.lower() in str(card.get('year', '')).lower()
+                    if year_filter.lower() in str(safe_get(card, 'year', '')).lower()
                 ]
             if set_filter:
                 filtered_collection = [
                     card for card in filtered_collection
-                    if set_filter.lower() in str(card.get('card_set', '')).lower()
+                    if set_filter.lower() in str(safe_get(card, 'card_set', '')).lower()
                 ]
             if tag_filter:
                 filtered_collection = [
                     card for card in filtered_collection
-                    if tag_filter.lower() in str(card.get('tags', '')).lower()
+                    if tag_filter.lower() in str(safe_get(card, 'tags', '')).lower()
                 ]
             
             if isinstance(filtered_collection, pd.DataFrame):

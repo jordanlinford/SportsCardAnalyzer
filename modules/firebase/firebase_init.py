@@ -123,76 +123,67 @@ def initialize_pyrebase():
 def get_firebase_app():
     """
     Get the initialized Firebase Admin SDK app.
-    If not initialized, attempt to initialize it.
+    If not initialized, attempts to initialize it.
     """
     global _firebase_app
-    
     if _firebase_app is None:
         _firebase_app = initialize_firebase_admin()
-    
     return _firebase_app
 
 def get_firestore_client():
     """
     Get the initialized Firestore client.
-    If not initialized, attempt to initialize it.
+    If not initialized, attempts to initialize it.
     """
     global _firestore_client
-    
     if _firestore_client is None:
         _firestore_client = initialize_firestore()
-    
     return _firestore_client
 
 def get_pyrebase():
     """
     Get the initialized Pyrebase instance.
-    If not initialized, attempt to initialize it.
+    If not initialized, attempts to initialize it.
     """
     global _pyrebase_instance
-    
     if _pyrebase_instance is None:
         _pyrebase_instance = initialize_pyrebase()
-    
     return _pyrebase_instance
 
 def get_pyrebase_auth():
     """
     Get the initialized Pyrebase auth instance.
-    If not initialized, attempt to initialize it.
+    If not initialized, attempts to initialize it.
     """
     global _pyrebase_auth
-    
     if _pyrebase_auth is None:
-        pyrebase_instance = get_pyrebase()
-        if pyrebase_instance is not None:
-            _pyrebase_auth = pyrebase_instance.auth()
-    
+        firebase = get_pyrebase()
+        if firebase:
+            _pyrebase_auth = firebase.auth()
     return _pyrebase_auth
 
 def initialize_all():
     """
     Initialize all Firebase components in the correct order.
-    Returns True if all initializations are successful, False otherwise.
+    Returns True if all components are initialized successfully, False otherwise.
     """
     try:
-        # Initialize Firebase Admin SDK
+        print("Initializing all Firebase components...")
+        
+        # Initialize Firebase Admin SDK first
         app = initialize_firebase_admin()
         if app is None:
-            print("Failed to initialize Firebase Admin SDK")
-            return False
+            raise Exception("Failed to initialize Firebase Admin SDK")
         
-        # Initialize Firestore client
+        # Initialize Firestore
         db = initialize_firestore()
         if db is None:
-            print("Failed to initialize Firestore client")
-            return False
+            raise Exception("Failed to initialize Firestore")
         
         # Initialize Pyrebase
-        pyrebase = initialize_pyrebase()
-        if pyrebase is None:
-            print("Failed to initialize Pyrebase")
-            return False
+        firebase = initialize_pyrebase()
+        if firebase is None:
+            raise Exception("Failed to initialize Pyrebase")
         
         print("All Firebase components initialized successfully")
         return True

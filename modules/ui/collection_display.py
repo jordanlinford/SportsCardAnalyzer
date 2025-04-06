@@ -6,6 +6,7 @@ from datetime import datetime
 import traceback
 import base64
 from typing import Optional
+import requests
 
 def display_collection_grid(filtered_df, is_shared=False):
     """Display the collection in a grid layout with cards"""
@@ -34,22 +35,45 @@ def display_collection_grid(filtered_df, is_shared=False):
             photo_url = card.get('photo', '')
             if not photo_url or pd.isna(photo_url):
                 photo_url = "https://placehold.co/300x400/e6e6e6/666666.png?text=No+Card+Image"
+            elif photo_url.startswith('data:image'):
+                # Handle base64 images
+                try:
+                    # Display base64 image
+                    st.image(photo_url, use_container_width=True)
+                except Exception as e:
+                    st.error(f"Error displaying base64 image for card {idx + 1}: {str(e)}")
+                    photo_url = "https://placehold.co/300x400/e6e6e6/666666.png?text=Base64+Error"
+            else:
+                # Handle URL images
+                try:
+                    # Test if URL is valid
+                    response = requests.head(photo_url, timeout=5)
+                    if response.status_code != 200:
+                        st.warning(f"Invalid image URL status code {response.status_code} for card {idx + 1}")
+                        photo_url = "https://placehold.co/300x400/e6e6e6/666666.png?text=Invalid+URL"
+                except Exception as e:
+                    st.warning(f"Error validating image URL for card {idx + 1}: {str(e)}")
+                    photo_url = "https://placehold.co/300x400/e6e6e6/666666.png?text=URL+Error"
             
-            # Card HTML
-            card_html = f'''
-                <div class="collection-card">
-                    <div class="card-image-container">
-                        <img src="{photo_url}" alt="Card Image">
+            # Card HTML with improved error handling
+            try:
+                card_html = f'''
+                    <div class="collection-card">
+                        <div class="card-image-container">
+                            <img src="{photo_url}" alt="Card Image" onerror="this.src='https://placehold.co/300x400/e6e6e6/666666.png?text=Image+Error'">
+                        </div>
+                        <div class="card-details">
+                            <h3>{card.get('player_name', 'Unknown Player')}</h3>
+                            <p>{card.get('year', '')} {card.get('card_set', '')}</p>
+                            <p>Condition: {card.get('condition', 'Unknown')}</p>
+                            <p>Purchase: ${purchase_price:.2f}</p>
+                        </div>
                     </div>
-                    <div class="card-details">
-                        <h3>{card.get('player_name', 'Unknown Player')}</h3>
-                        <p>{card.get('year', '')} {card.get('card_set', '')}</p>
-                        <p>Condition: {card.get('condition', 'Unknown')}</p>
-                        <p>Purchase: ${purchase_price:.2f}</p>
-                    </div>
-                </div>
-            '''
-            st.markdown(card_html, unsafe_allow_html=True)
+                '''
+                st.markdown(card_html, unsafe_allow_html=True)
+            except Exception as e:
+                st.error(f"Error creating card HTML for card {idx + 1}: {str(e)}")
+                continue
             
             # Add editable current value field and action buttons if not in shared view
             if not is_shared:
@@ -75,13 +99,6 @@ def display_collection_grid(filtered_df, is_shared=False):
                                 
                                 # Update last_updated timestamp
                                 st.session_state.collection.loc[idx, 'last_updated'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-                                
-                                # Debug: Print update details
-                                st.write("Debug: Updating card with values:", {
-                                    'current_value': new_value,
-                                    'roi': new_roi,
-                                    'last_updated': st.session_state.collection.loc[idx, 'last_updated']
-                                })
                                 
                                 # Save to Firebase
                                 if DatabaseService.save_user_collection(st.session_state.uid, st.session_state.collection):

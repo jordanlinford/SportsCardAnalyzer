@@ -73,39 +73,77 @@ def display_case_grid(display_case):
         st.info("No cards found in this display case")
         return
 
+    # Add custom CSS for fixed width container
+    st.markdown("""
+        <style>
+        .fixed-width-container {
+            width: 100%;
+            min-width: 800px;
+            margin: 0 auto;
+        }
+        </style>
+        """, unsafe_allow_html=True)
+
     # Create a container for the grid
     with st.container():
-        # Create a grid of columns
-        cols = st.columns(3)
+        st.markdown('<div class="fixed-width-container">', unsafe_allow_html=True)
         
-        for idx, card in enumerate(display_case['cards']):
-            col = cols[idx % 3]  # Cycle through columns
-            with col:
-                try:
-                    # Display only the card image
-                    if card.get('photo'):
-                        st.image(card['photo'], use_container_width=True)
-                except Exception as e:
-                    st.error(f"Failed to load image: {str(e)}")
+        # Process cards in groups of 3
+        for i in range(0, len(display_case['cards']), 3):
+            # Create a row with 3 columns
+            cols = st.columns(3)
+            
+            # Display up to 3 cards in this row
+            for j in range(3):
+                if i + j < len(display_case['cards']):
+                    card = display_case['cards'][i + j]
+                    with cols[j]:
+                        try:
+        if card.get('photo'):
+                                photo = card['photo']
+                                # Check if the photo is a base64 string
+                                if isinstance(photo, str) and photo.startswith('data:image'):
+                                    try:
+                                        # Extract the base64 part
+                                        base64_data = photo.split(',')[1]
+                                        # Decode the base64 string
+                                        image_data = base64.b64decode(base64_data)
+                                        # Create an image from the bytes
+                                        image = Image.open(io.BytesIO(image_data))
+                                        # Display the image
+                                        st.image(image, use_container_width=True)
+                                    except Exception as e:
+                                        st.error(f"Failed to load base64 image: {str(e)}")
+                                # Check if the photo is a URL
+                                elif isinstance(photo, str) and (photo.startswith('http://') or photo.startswith('https://')):
+                                    # Display the image from URL
+                                    st.image(photo, use_container_width=True)
+                                else:
+                                    st.warning("Invalid image format")
+                        except Exception as e:
+                            st.error(f"Failed to display card: {str(e)}")
+                            st.write("Card data:", card)
+        
+        st.markdown('</div>', unsafe_allow_html=True)
 
 def export_display_case(display_case):
     """Export display case data as a JSON file with enhanced card details."""
     try:
-        export_data = {
+    export_data = {
             'display_case': {
                 'name': display_case.get('name', ''),
                 'description': display_case.get('description', ''),
-                'tags': display_case['tags'],
-                'created_date': display_case['created_date'],
-                'total_value': display_case['total_value'],
+        'tags': display_case['tags'],
+        'created_date': display_case['created_date'],
+        'total_value': display_case['total_value'],
                 'total_cards': len(display_case['cards'])
             },
-            'cards': []
-        }
-        
-        for card in display_case['cards']:
+        'cards': []
+    }
+    
+    for card in display_case['cards']:
             # Create a new dictionary with only serializable data
-            card_data = {
+        card_data = {
                 'player_name': str(card.get('player_name', '')),
                 'year': str(card.get('year', '')),
                 'card_set': str(card.get('card_set', '')),
@@ -119,9 +157,9 @@ def export_display_case(display_case):
                 'notes': str(card.get('notes', '')),
                 'photo': str(card.get('photo', '')),
                 'tags': [str(tag) for tag in card.get('tags', [])]
-            }
-            export_data['cards'].append(card_data)
-        
+        }
+        export_data['cards'].append(card_data)
+    
         # Format the JSON with indentation for better readability
         return json.dumps(export_data, indent=2)
     except Exception as e:
@@ -366,11 +404,11 @@ def main():
         return
 
     tab1, tab2 = st.tabs(["Create Display Case", "View Display Cases"])
-
+    
     with tab1:
         # Display case creation section
         with st.expander("Create New Display Case", expanded=True):
-            st.subheader("Create New Display Case")
+        st.subheader("Create New Display Case")
             
             # Get display case name
             display_case_name = st.text_input("Display Case Name", key="new_display_case_name")
@@ -393,13 +431,13 @@ def main():
                         if display_case:
                             st.success(f"Successfully created display case '{display_case_name}' with {len(display_case['cards'])} cards")
                             st.rerun()  # Refresh the page to show the new display case
-                        else:
+                    else:
                             st.error("Failed to create display case. Please try again.")
                     except Exception as e:
                         st.error(f"Error creating display case: {str(e)}")
                 else:
                     st.warning("Please enter both a display case name and select a tag")
-
+    
     with tab2:
         if st.session_state.display_case_manager is None:
             st.info("Please add some cards to your collection first to create display cases.")
@@ -431,7 +469,7 @@ def main():
                     if st.button("🗑️ Delete"):
                         if st.session_state.display_case_manager.delete_display_case(selected_case):
                             st.success(f"Deleted display case: {selected_case}")
-                            st.rerun()
+                        st.rerun()
                         else:
                             st.error("Failed to delete display case")
                 

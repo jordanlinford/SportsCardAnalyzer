@@ -20,10 +20,20 @@ def save_card_to_collection(card_dict: Dict[str, Any]) -> bool:
         
         # Save updated collection
         success = DatabaseService.save_user_collection(st.session_state.uid, collection)
-        return success
+        
+        if not success:
+            st.error("Failed to save card to collection. Please try again.")
+            return False
+            
+        # Force refresh the collection in session state
+        st.session_state.collection = DatabaseService.get_user_collection(st.session_state.uid)
+        
+        return True
         
     except Exception as e:
         st.error(f"Error saving card to collection: {str(e)}")
+        import traceback
+        st.write("Debug: Error traceback:", traceback.format_exc())
         return False
 
 def add_to_collection(card_data: Dict[str, Any], market_data: Optional[Dict[str, Any]] = None) -> bool:
