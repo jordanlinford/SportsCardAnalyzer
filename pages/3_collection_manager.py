@@ -703,24 +703,63 @@ def display_collection_grid(filtered_collection, is_shared=False):
                     try:
                         # Handle base64 images
                         if isinstance(photo, str) and photo.startswith('data:image'):
-                            st.image(photo, use_container_width=True)
+                            try:
+                                # Validate base64 string
+                                base64_part = photo.split(',')[1]
+                                base64.b64decode(base64_part)
+                                st.image(photo, use_container_width=True)
+                            except Exception as e:
+                                st.warning(f"Invalid base64 image for card {idx + 1}")
+                                st.image("https://placehold.co/300x400/e6e6e6/666666.png?text=Invalid+Image", use_container_width=True)
                         # Handle URL images
                         elif isinstance(photo, str) and (photo.startswith('http://') or photo.startswith('https://')):
-                            st.image(photo, use_container_width=True)
+                            try:
+                                response = requests.head(photo, timeout=5)
+                                if response.status_code == 200:
+                                    st.image(photo, use_container_width=True)
+                                else:
+                                    st.warning(f"Invalid image URL for card {idx + 1}")
+                                    st.image("https://placehold.co/300x400/e6e6e6/666666.png?text=Invalid+Image", use_container_width=True)
+                            except Exception as e:
+                                st.warning(f"Failed to load image URL for card {idx + 1}")
+                                st.image("https://placehold.co/300x400/e6e6e6/666666.png?text=Invalid+Image", use_container_width=True)
                         # Handle file upload objects
                         elif hasattr(photo, 'getvalue'):
-                            st.image(photo, use_container_width=True)
+                            try:
+                                st.image(photo, use_container_width=True)
+                            except Exception as e:
+                                st.warning(f"Failed to load uploaded image for card {idx + 1}")
+                                st.image("https://placehold.co/300x400/e6e6e6/666666.png?text=Invalid+Image", use_container_width=True)
                         # Handle array/list of photos
                         elif isinstance(photo, (list, tuple)) and photo:
                             # Take the first photo from the array
                             first_photo = photo[0]
                             if isinstance(first_photo, str):
                                 if first_photo.startswith('data:image'):
-                                    st.image(first_photo, use_container_width=True)
+                                    try:
+                                        base64_part = first_photo.split(',')[1]
+                                        base64.b64decode(base64_part)
+                                        st.image(first_photo, use_container_width=True)
+                                    except Exception as e:
+                                        st.warning(f"Invalid base64 image in array for card {idx + 1}")
+                                        st.image("https://placehold.co/300x400/e6e6e6/666666.png?text=Invalid+Image", use_container_width=True)
                                 elif first_photo.startswith('http://') or first_photo.startswith('https://'):
-                                    st.image(first_photo, use_container_width=True)
+                                    try:
+                                        response = requests.head(first_photo, timeout=5)
+                                        if response.status_code == 200:
+                                            st.image(first_photo, use_container_width=True)
+                                        else:
+                                            st.warning(f"Invalid image URL in array for card {idx + 1}")
+                                            st.image("https://placehold.co/300x400/e6e6e6/666666.png?text=Invalid+Image", use_container_width=True)
+                                    except Exception as e:
+                                        st.warning(f"Failed to load image URL in array for card {idx + 1}")
+                                        st.image("https://placehold.co/300x400/e6e6e6/666666.png?text=Invalid+Image", use_container_width=True)
                             elif hasattr(first_photo, 'getvalue'):
-                                st.image(first_photo, use_container_width=True)
+                                try:
+                                    st.image(first_photo, use_container_width=True)
+                                except Exception as e:
+                                    st.warning(f"Failed to load uploaded image in array for card {idx + 1}")
+                                    st.image("https://placehold.co/300x400/e6e6e6/666666.png?text=Invalid+Image", use_container_width=True)
                             else:
                                 st.warning(f"Invalid image format in array for card {idx + 1}")
                                 st.image("https://placehold.co/300x400/e6e6e6/666666.png?text=Invalid+Image", use_container_width=True)
