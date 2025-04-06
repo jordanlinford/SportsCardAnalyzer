@@ -571,36 +571,29 @@ def save_collection_to_firebase(collection_df):
                 if photo is not None and not pd.isna(photo):
                     if isinstance(photo, str):
                         if photo.startswith('data:image'):
-                            # Validate base64 image
+                            # If it's already a valid base64 string, keep it as is
                             try:
-                                # Check if it's a valid base64 string
+                                # Just validate the base64 string
                                 base64_part = photo.split(',')[1]
-                                # Decode and re-encode to ensure validity
-                                image_data = base64.b64decode(base64_part)
-                                # Re-encode with proper format
-                                photo_data = f"data:image/jpeg;base64,{base64.b64encode(image_data).decode()}"
+                                base64.b64decode(base64_part)
+                                photo_data = photo
                             except Exception as e:
                                 st.warning(f"Warning: Invalid base64 image for card {idx + 1}. Error: {str(e)}")
                                 photo_data = None
                         elif photo.startswith('http'):
-                            # Validate URL image
+                            # For URL images, keep the URL as is
                             try:
                                 response = requests.head(photo, timeout=5)
                                 if response.status_code == 200:
-                                    # Get the image content
-                                    img_response = requests.get(photo, timeout=10)
-                                    img_response.raise_for_status()
-                                    # Convert to base64
-                                    photo_data = f"data:image/jpeg;base64,{base64.b64encode(img_response.content).decode()}"
+                                    photo_data = photo
                                 else:
                                     st.warning(f"Warning: Invalid image URL status code {response.status_code} for card {idx + 1}")
                             except Exception as e:
-                                st.warning(f"Warning: Failed to process image URL for card {idx + 1}: {str(e)}")
+                                st.warning(f"Warning: Failed to validate image URL for card {idx + 1}: {str(e)}")
                     elif hasattr(photo, 'getvalue'):
                         try:
-                            # Handle file upload object
+                            # Handle file upload object by converting to base64
                             photo_bytes = photo.getvalue()
-                            # Convert to base64
                             photo_data = f"data:image/jpeg;base64,{base64.b64encode(photo_bytes).decode()}"
                         except Exception as photo_error:
                             st.warning(f"Warning: Could not process photo for card {idx + 1}. Error: {str(photo_error)}")
@@ -612,21 +605,19 @@ def save_collection_to_firebase(collection_df):
                                 if photo.startswith('data:image'):
                                     try:
                                         base64_part = photo.split(',')[1]
-                                        image_data = base64.b64decode(base64_part)
-                                        photo_data = f"data:image/jpeg;base64,{base64.b64encode(image_data).decode()}"
+                                        base64.b64decode(base64_part)
+                                        photo_data = photo
                                     except Exception as e:
                                         st.warning(f"Warning: Invalid base64 image from array for card {idx + 1}. Error: {str(e)}")
                                 elif photo.startswith('http'):
                                     try:
                                         response = requests.head(photo, timeout=5)
                                         if response.status_code == 200:
-                                            img_response = requests.get(photo, timeout=10)
-                                            img_response.raise_for_status()
-                                            photo_data = f"data:image/jpeg;base64,{base64.b64encode(img_response.content).decode()}"
+                                            photo_data = photo
                                         else:
                                             st.warning(f"Warning: Invalid image URL status code {response.status_code} for card {idx + 1}")
                                     except Exception as e:
-                                        st.warning(f"Warning: Failed to process image URL from array for card {idx + 1}: {str(e)}")
+                                        st.warning(f"Warning: Failed to validate image URL from array for card {idx + 1}: {str(e)}")
                 
                 # Create card object with proper type conversion
                 try:
