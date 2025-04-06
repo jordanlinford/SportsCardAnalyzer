@@ -21,8 +21,8 @@ def display_collection_grid(filtered_df, is_shared=False):
     for idx, card in filtered_df.iterrows():
         # Calculate ROI
         try:
-            purchase_price = float(card.get('purchase_price', 0))
-            current_value = float(card.get('current_value', 0))
+            purchase_price = float(safe_get(card, 'purchase_price', 0))
+            current_value = float(safe_get(card, 'current_value', 0))
             roi = ((current_value - purchase_price) / purchase_price * 100) if purchase_price > 0 else 0
         except (ValueError, TypeError):
             purchase_price = 0.0
@@ -32,12 +32,16 @@ def display_collection_grid(filtered_df, is_shared=False):
         # Create unique container for each card
         with st.container():
             # Handle image display
-            photo_url = card.get('photo', '')
+            photo_url = safe_get(card, 'photo', '')
             if not photo_url or pd.isna(photo_url):
                 photo_url = "https://placehold.co/300x400/e6e6e6/666666.png?text=No+Card+Image"
             elif photo_url.startswith('data:image'):
                 # Handle base64 images
                 try:
+                    # Validate base64 string
+                    base64_part = photo_url.split(',')[1]
+                    # Try to decode to ensure it's valid
+                    base64.b64decode(base64_part)
                     # Display base64 image
                     st.image(photo_url, use_container_width=True)
                 except Exception as e:
@@ -51,6 +55,12 @@ def display_collection_grid(filtered_df, is_shared=False):
                     if response.status_code != 200:
                         st.warning(f"Invalid image URL status code {response.status_code} for card {idx + 1}")
                         photo_url = "https://placehold.co/300x400/e6e6e6/666666.png?text=Invalid+URL"
+                    else:
+                        # Get the image content to ensure it's valid
+                        img_response = requests.get(photo_url, timeout=10)
+                        img_response.raise_for_status()
+                        # Convert to base64 for consistent display
+                        photo_url = f"data:image/jpeg;base64,{base64.b64encode(img_response.content).decode()}"
                 except Exception as e:
                     st.warning(f"Error validating image URL for card {idx + 1}: {str(e)}")
                     photo_url = "https://placehold.co/300x400/e6e6e6/666666.png?text=URL+Error"
@@ -63,9 +73,9 @@ def display_collection_grid(filtered_df, is_shared=False):
                             <img src="{photo_url}" alt="Card Image" onerror="this.src='https://placehold.co/300x400/e6e6e6/666666.png?text=Image+Error'">
                         </div>
                         <div class="card-details">
-                            <h3>{card.get('player_name', 'Unknown Player')}</h3>
-                            <p>{card.get('year', '')} {card.get('card_set', '')}</p>
-                            <p>Condition: {card.get('condition', 'Unknown')}</p>
+                            <h3>{safe_get(card, 'player_name', 'Unknown Player')}</h3>
+                            <p>{safe_get(card, 'year', '')} {safe_get(card, 'card_set', '')}</p>
+                            <p>Condition: {safe_get(card, 'condition', 'Unknown')}</p>
                             <p>Purchase: ${purchase_price:.2f}</p>
                         </div>
                     </div>

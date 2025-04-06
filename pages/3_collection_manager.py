@@ -87,21 +87,29 @@ def update_card_values():
             try:
                 # Get current value
                 current_value = analyzer.analyze_card_value(
-                    card.get('player_name', ''),
-                    card.get('year', ''),
-                    card.get('card_set', ''),
-                    card.get('card_number', ''),
-                    card.get('variation', ''),
-                    card.get('condition', '')
+                    safe_get(card, 'player_name', ''),
+                    safe_get(card, 'year', ''),
+                    safe_get(card, 'card_set', ''),
+                    safe_get(card, 'card_number', ''),
+                    safe_get(card, 'variation', ''),
+                    safe_get(card, 'condition', '')
                 )
                 
-                # Update card value
-                card['current_value'] = current_value
+                # Update card value - handle both Card objects and dictionaries
+                if hasattr(card, 'current_value'):
+                    card.current_value = current_value
+                else:
+                    card['current_value'] = current_value
                 
                 # Calculate ROI
-                purchase_price = float(card.get('purchase_price', 0))
+                purchase_price = float(safe_get(card, 'purchase_price', 0))
                 roi = ((current_value - purchase_price) / purchase_price * 100) if purchase_price > 0 else 0
-                card['roi'] = roi
+                
+                # Update ROI - handle both Card objects and dictionaries
+                if hasattr(card, 'roi'):
+                    card.roi = roi
+                else:
+                    card['roi'] = roi
                 
                 # Update totals
                 total_value += current_value
@@ -403,15 +411,15 @@ def edit_card_form(card_index, card_data):
                 st.error("Invalid card data format")
                 return
                 
-            player_name = st.text_input("Player Name", value=card_dict.get('player_name', ''), key="edit_player_name")
-            year = st.text_input("Year", value=card_dict.get('year', ''), key="edit_year")
-            card_set = st.text_input("Card Set", value=card_dict.get('card_set', ''), key="edit_card_set")
-            card_number = st.text_input("Card Number", value=card_dict.get('card_number', ''), key="edit_card_number")
-            variation = st.text_input("Variation", value=card_dict.get('variation', ''), key="edit_variation")
+            player_name = st.text_input("Player Name", value=safe_get(card_dict, 'player_name', ''), key="edit_player_name")
+            year = st.text_input("Year", value=safe_get(card_dict, 'year', ''), key="edit_year")
+            card_set = st.text_input("Card Set", value=safe_get(card_dict, 'card_set', ''), key="edit_card_set")
+            card_number = st.text_input("Card Number", value=safe_get(card_dict, 'card_number', ''), key="edit_card_number")
+            variation = st.text_input("Variation", value=safe_get(card_dict, 'variation', ''), key="edit_variation")
         
         with col2:
             # Get the current condition
-            current_condition = card_dict.get('condition', 'Raw')
+            current_condition = safe_get(card_dict, 'condition', 'Raw')
             
             # Define all possible conditions
             conditions = ["Raw", "PSA 1", "PSA 2", "PSA 3", "PSA 4", "PSA 5", "PSA 6", "PSA 7", "PSA 8", "PSA 9", "PSA 10", "Graded Other"]
@@ -432,18 +440,18 @@ def edit_card_form(card_index, card_data):
                 "Purchase Price",
                 min_value=0.0,
                 step=0.01,
-                value=float(card_dict.get('purchase_price', 0)),
+                value=float(safe_get(card_dict, 'purchase_price', 0)),
                 key="edit_purchase_price"
             )
             purchase_date = st.date_input(
                 "Purchase Date",
-                value=_parse_date(card_dict.get('purchase_date')),
+                value=_parse_date(safe_get(card_dict, 'purchase_date')),
                 key="edit_purchase_date"
             )
-            notes = st.text_area("Notes", value=card_dict.get('notes', ''), key="edit_notes")
+            notes = st.text_area("Notes", value=safe_get(card_dict, 'notes', ''), key="edit_notes")
             tags = st.text_input(
                 "Tags (comma-separated)",
-                value=', '.join(card_dict.get('tags', [])),
+                value=', '.join(safe_get(card_dict, 'tags', [])),
                 key="edit_tags"
             )
         
@@ -546,10 +554,6 @@ def load_collection_from_firebase():
 def save_collection_to_firebase(collection_df):
     """Save the collection to Firebase for the current user"""
     try:
-        # Debug: Print input type and data
-        st.write("Debug: Input type:", type(collection_df))
-        st.write("Debug: Input data:", collection_df.head())
-        
         # Convert DataFrame to list of dictionaries if needed
         if isinstance(collection_df, pd.DataFrame):
             cards_data = collection_df.to_dict('records')
@@ -560,133 +564,89 @@ def save_collection_to_firebase(collection_df):
         
         for idx, row in enumerate(cards_data):
             try:
-                # Handle dates
-                purchase_date = row.get('purchase_date', '')
-                if not purchase_date or pd.isna(purchase_date):
-                    purchase_date = datetime.now().isoformat()
-                elif isinstance(purchase_date, datetime):
-                    purchase_date = purchase_date.isoformat()
-                elif isinstance(purchase_date, str):
-                    try:
-                        datetime.fromisoformat(purchase_date)
-                    except ValueError:
-                        purchase_date = datetime.now().isoformat()
-                
-                last_updated = row.get('last_updated', '')
-                if not last_updated or pd.isna(last_updated):
-                    last_updated = datetime.now().isoformat()
-                elif isinstance(last_updated, datetime):
-                    last_updated = last_updated.isoformat()
-                elif isinstance(last_updated, str):
-                    try:
-                        datetime.fromisoformat(last_updated)
-                    except ValueError:
-                        last_updated = datetime.now().isoformat()
-                
-                # Handle numeric values with better error handling
-                try:
-                    purchase_price = float(row.get('purchase_price', 0.0))
-                    if pd.isna(purchase_price):
-                        purchase_price = 0.0
-                except (ValueError, TypeError) as e:
-                    st.warning(f"Warning: Invalid purchase price for card {idx + 1}. Setting to 0.0. Error: {str(e)}")
-                    purchase_price = 0.0
-                    
-                try:
-                    current_value = float(row.get('current_value', purchase_price))
-                    if pd.isna(current_value):
-                        current_value = purchase_price
-                except (ValueError, TypeError) as e:
-                    st.warning(f"Warning: Invalid current value for card {idx + 1}. Using purchase price. Error: {str(e)}")
-                    current_value = purchase_price
-                    
-                try:
-                    roi = float(row.get('roi', 0.0))
-                    if pd.isna(roi):
-                        roi = 0.0
-                except (ValueError, TypeError) as e:
-                    st.warning(f"Warning: Invalid ROI for card {idx + 1}. Setting to 0.0. Error: {str(e)}")
-                    roi = 0.0
-                
-                # Handle photo data
-                photo = row.get('photo')
-                photo_data = "https://placehold.co/300x400/e6e6e6/666666.png?text=No+Card+Image"
+                # Handle photo data first to ensure it's properly processed
+                photo = safe_get(row, 'photo')
+                photo_data = None
                 
                 if photo is not None and not pd.isna(photo):
                     if isinstance(photo, str):
                         if photo.startswith('data:image'):
-                            # Already in base64 format
-                            photo_data = photo
-                            st.write(f"Debug: Using existing base64 image for card {idx + 1}")
-                        elif photo.startswith('http'):
-                            # Valid URL, keep as is
+                            # Validate base64 image
                             try:
-                                # Test the URL before saving
+                                # Check if it's a valid base64 string
+                                base64_part = photo.split(',')[1]
+                                # Decode and re-encode to ensure validity
+                                image_data = base64.b64decode(base64_part)
+                                # Re-encode with proper format
+                                photo_data = f"data:image/jpeg;base64,{base64.b64encode(image_data).decode()}"
+                            except Exception as e:
+                                st.warning(f"Warning: Invalid base64 image for card {idx + 1}. Error: {str(e)}")
+                                photo_data = None
+                        elif photo.startswith('http'):
+                            # Validate URL image
+                            try:
                                 response = requests.head(photo, timeout=5)
                                 if response.status_code == 200:
-                                    photo_data = photo
-                                    st.write(f"Debug: Using valid image URL for card {idx + 1}")
+                                    # Get the image content
+                                    img_response = requests.get(photo, timeout=10)
+                                    img_response.raise_for_status()
+                                    # Convert to base64
+                                    photo_data = f"data:image/jpeg;base64,{base64.b64encode(img_response.content).decode()}"
                                 else:
                                     st.warning(f"Warning: Invalid image URL status code {response.status_code} for card {idx + 1}")
-                                    photo_data = "https://placehold.co/300x400/e6e6e6/666666.png?text=Invalid+URL"
-                            except Exception as e:
-                                st.warning(f"Warning: Failed to validate image URL for card {idx + 1}: {str(e)}")
-                                photo_data = "https://placehold.co/300x400/e6e6e6/666666.png?text=URL+Error"
-                        else:
-                            try:
-                                # Try to load the image URL
-                                response = requests.get(photo, timeout=10)
-                                response.raise_for_status()
-                                content_type = response.headers.get('content-type', '').lower()
-                                if 'image' in content_type:
-                                    # Convert to base64
-                                    photo_data = f"data:image/jpeg;base64,{base64.b64encode(response.content).decode()}"
-                                    st.write(f"Debug: Successfully converted image URL to base64 for card {idx + 1}")
-                                else:
-                                    st.warning(f"Warning: Invalid content type {content_type} for card {idx + 1}")
-                                    photo_data = "https://placehold.co/300x400/e6e6e6/666666.png?text=Invalid+Content"
                             except Exception as e:
                                 st.warning(f"Warning: Failed to process image URL for card {idx + 1}: {str(e)}")
-                                photo_data = "https://placehold.co/300x400/e6e6e6/666666.png?text=URL+Error"
-                    else:
+                    elif hasattr(photo, 'getvalue'):
                         try:
                             # Handle file upload object
                             photo_bytes = photo.getvalue()
+                            # Convert to base64
                             photo_data = f"data:image/jpeg;base64,{base64.b64encode(photo_bytes).decode()}"
-                            st.write(f"Debug: Successfully converted uploaded image to base64 for card {idx + 1}")
                         except Exception as photo_error:
                             st.warning(f"Warning: Could not process photo for card {idx + 1}. Error: {str(photo_error)}")
-                            photo_data = "https://placehold.co/300x400/e6e6e6/666666.png?text=Upload+Error"
-                
-                # Handle tags
-                tags = row.get('tags', '')
-                if pd.isna(tags):
-                    tags = []
-                elif isinstance(tags, str):
-                    tags = [tag.strip() for tag in tags.split(',') if tag.strip()]
-                elif not isinstance(tags, list):
-                    tags = []
+                    elif isinstance(photo, (list, tuple)):
+                        # Handle array of photos - take the first one
+                        if photo:
+                            photo = photo[0]
+                            if isinstance(photo, str):
+                                if photo.startswith('data:image'):
+                                    try:
+                                        base64_part = photo.split(',')[1]
+                                        image_data = base64.b64decode(base64_part)
+                                        photo_data = f"data:image/jpeg;base64,{base64.b64encode(image_data).decode()}"
+                                    except Exception as e:
+                                        st.warning(f"Warning: Invalid base64 image from array for card {idx + 1}. Error: {str(e)}")
+                                elif photo.startswith('http'):
+                                    try:
+                                        response = requests.head(photo, timeout=5)
+                                        if response.status_code == 200:
+                                            img_response = requests.get(photo, timeout=10)
+                                            img_response.raise_for_status()
+                                            photo_data = f"data:image/jpeg;base64,{base64.b64encode(img_response.content).decode()}"
+                                        else:
+                                            st.warning(f"Warning: Invalid image URL status code {response.status_code} for card {idx + 1}")
+                                    except Exception as e:
+                                        st.warning(f"Warning: Failed to process image URL from array for card {idx + 1}: {str(e)}")
                 
                 # Create card object with proper type conversion
                 try:
                     card = Card(
-                        player_name=str(row.get('player_name', '')),
-                        year=str(row.get('year', '')),
-                        card_set=str(row.get('card_set', '')),
-                        card_number=str(row.get('card_number', '')),
-                        variation=str(row.get('variation', '')),
-                        condition=CardCondition.from_string(str(row.get('condition', 'Raw'))),
-                        purchase_price=purchase_price,
-                        purchase_date=datetime.fromisoformat(purchase_date),
-                        current_value=current_value,
-                        last_updated=datetime.fromisoformat(last_updated),
-                        notes=str(row.get('notes', '')),
+                        player_name=str(safe_get(row, 'player_name', '')),
+                        year=str(safe_get(row, 'year', '')),
+                        card_set=str(safe_get(row, 'card_set', '')),
+                        card_number=str(safe_get(row, 'card_number', '')),
+                        variation=str(safe_get(row, 'variation', '')),
+                        condition=CardCondition.from_string(str(safe_get(row, 'condition', 'Raw'))),
+                        purchase_price=float(safe_get(row, 'purchase_price', 0)),
+                        purchase_date=datetime.fromisoformat(safe_get(row, 'purchase_date', datetime.now().isoformat())),
+                        current_value=float(safe_get(row, 'current_value', 0)),
+                        last_updated=datetime.fromisoformat(safe_get(row, 'last_updated', datetime.now().isoformat())),
+                        notes=str(safe_get(row, 'notes', '')),
                         photo=photo_data,
-                        roi=roi,
-                        tags=tags
+                        roi=float(safe_get(row, 'roi', 0)),
+                        tags=[str(tag) for tag in safe_get(row, 'tags', [])]
                     )
                     cards.append(card)
-                    st.write(f"Debug: Successfully processed card {idx + 1}")
                 except Exception as card_error:
                     st.error(f"Error creating card object for card {idx + 1}: {str(card_error)}")
                     continue
@@ -741,9 +701,37 @@ def display_collection_grid(filtered_collection, is_shared=False):
                 
                 if photo:
                     try:
-                        st.image(photo, use_container_width=True)
+                        # Handle base64 images
+                        if isinstance(photo, str) and photo.startswith('data:image'):
+                            st.image(photo, use_container_width=True)
+                        # Handle URL images
+                        elif isinstance(photo, str) and (photo.startswith('http://') or photo.startswith('https://')):
+                            st.image(photo, use_container_width=True)
+                        # Handle file upload objects
+                        elif hasattr(photo, 'getvalue'):
+                            st.image(photo, use_container_width=True)
+                        # Handle array/list of photos
+                        elif isinstance(photo, (list, tuple)) and photo:
+                            # Take the first photo from the array
+                            first_photo = photo[0]
+                            if isinstance(first_photo, str):
+                                if first_photo.startswith('data:image'):
+                                    st.image(first_photo, use_container_width=True)
+                                elif first_photo.startswith('http://') or first_photo.startswith('https://'):
+                                    st.image(first_photo, use_container_width=True)
+                            elif hasattr(first_photo, 'getvalue'):
+                                st.image(first_photo, use_container_width=True)
+                            else:
+                                st.warning(f"Invalid image format in array for card {idx + 1}")
+                                st.image("https://placehold.co/300x400/e6e6e6/666666.png?text=Invalid+Image", use_container_width=True)
+                        else:
+                            st.warning(f"Invalid image format for card {idx + 1}")
+                            st.image("https://placehold.co/300x400/e6e6e6/666666.png?text=Invalid+Image", use_container_width=True)
                     except Exception as e:
-                        st.error(f"Failed to load image: {str(e)}")
+                        st.warning(f"Failed to load image for card {idx + 1}")
+                        st.image("https://placehold.co/300x400/e6e6e6/666666.png?text=Invalid+Image", use_container_width=True)
+                else:
+                    st.image("https://placehold.co/300x400/e6e6e6/666666.png?text=No+Image", use_container_width=True)
                 
                 # Safely get card details
                 player_name = card.get('player_name', '') if isinstance(card, dict) else getattr(card, 'player_name', '')
@@ -886,7 +874,7 @@ def main():
             if tag_filter:
                 filtered_collection = [
                     card for card in filtered_collection
-                    if tag_filter.lower() in str(card.get('tags', '')).lower()
+                    if any(tag_filter.lower() in tag.lower() for tag in safe_get(card, 'tags', []))
                 ]
             
             # Display collection summary
@@ -955,9 +943,10 @@ def main():
                     if set_filter.lower() in str(safe_get(card, 'card_set', '')).lower()
                 ]
             if tag_filter:
+                # Get all tags from the card and check if any match the filter
                 filtered_collection = [
                     card for card in filtered_collection
-                    if tag_filter.lower() in str(safe_get(card, 'tags', '')).lower()
+                    if any(tag_filter.lower() in tag.lower() for tag in safe_get(card, 'tags', []))
                 ]
             
             if isinstance(filtered_collection, pd.DataFrame):
