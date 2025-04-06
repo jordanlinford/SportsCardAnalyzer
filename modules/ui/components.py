@@ -7,6 +7,7 @@ import io
 import plotly.graph_objects as go
 from datetime import datetime, timedelta
 from modules.core.profit_calculator import ProfitCalculator
+from modules.core.grading_analyzer import GradingAnalyzer
 
 class CardDisplay:
     @staticmethod
@@ -17,6 +18,17 @@ class CardDisplay:
             return
 
         try:
+            # Handle base64 images
+            if isinstance(image_url, str) and image_url.startswith('data:image'):
+                try:
+                    st.image(image_url, width=width)
+                    return
+                except Exception as e:
+                    if show_placeholder:
+                        st.warning(f"Failed to load base64 image: {str(e)}")
+                    st.image("https://placehold.co/300x400/e6e6e6/666666.png?text=Invalid+Base64", width=width)
+                    return
+
             # Clean and format the URL
             image_url = image_url.strip()
             
@@ -41,9 +53,6 @@ class CardDisplay:
                 "Pragma": "no-cache"
             }
 
-            # Debug info
-            st.write(f"Attempting to load image from: {image_url}")
-
             # Try to load the image with requests first
             response = requests.get(image_url, headers=headers, timeout=10, verify=True)
             response.raise_for_status()
@@ -58,13 +67,14 @@ class CardDisplay:
             st.image(image_bytes, width=width)
 
         except Exception as e:
-            st.error(f"Failed to load image: {str(e)}")
-            
-            # Try direct loading as a last resort
+            # If the first attempt fails, try direct loading
             try:
                 st.image(image_url, width=width)
             except:
+                # If both attempts fail, show placeholder
                 st.image("https://placehold.co/300x400/e6e6e6/666666.png?text=Image+Load+Failed", width=width)
+                if show_placeholder:
+                    st.warning(f"Failed to load image: {str(e)}")
 
     @staticmethod
     def display_price_metrics(metrics: Dict[str, float]):
@@ -346,10 +356,164 @@ class CardDisplay:
             """)
 
     @staticmethod
-    def display_profit_calculator(selected_card: Dict[str, Any], market_data: Dict[str, Any]):
-        """Display profit calculator section with detailed cost breakdown."""
-        calculator = ProfitCalculator()
-        calculator.display_profit_analysis(selected_card)
+    def display_market_analysis(selected_card: Dict[str, Any], market_data: Dict[str, Any]):
+        """Display market analysis for a selected card"""
+        st.markdown("### Market Analysis")
+        
+        # Get metrics and scores
+        metrics = market_data['metrics']
+        scores = market_data['scores']
+        sentiment = market_data['sentiment']
+        predictions = market_data['predictions']
+        
+        # Display key metrics
+        st.markdown("#### Key Metrics")
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric(
+                "Average Price",
+                f"${metrics['avg_price']:.2f}",
+                help="Average sale price over the period"
+            )
+        with col2:
+            st.metric(
+                "Median Price",
+                f"${metrics['median_price']:.2f}",
+                help="Middle price point of all sales"
+            )
+        with col3:
+            st.metric(
+                "Price Range",
+                f"${metrics['low_price']:.2f} - ${metrics['high_price']:.2f}",
+                help="Lowest to highest sale price"
+            )
+        
+        # Display market scores
+        st.markdown("#### Market Scores")
+        col1, col2, col3, col4 = st.columns(4)
+        with col1:
+            st.metric(
+                "Trend Score",
+                f"{scores['trend_score']}/10",
+                help="Price trend direction and strength"
+            )
+        with col2:
+            st.metric(
+                "Volatility Score",
+                f"{scores['volatility_score']}/10",
+                help="Price stability and risk"
+            )
+        with col3:
+            st.metric(
+                "Liquidity Score",
+                f"{scores['liquidity_score']}/10",
+                help="Ease of buying/selling"
+            )
+        with col4:
+            st.metric(
+                "Momentum Score",
+                f"{scores['momentum_score']}/10",
+                help="Recent price movement strength"
+            )
+        
+        # Display key insights
+        st.markdown("#### Key Insights")
+        insights = []
+        
+        # Trend Analysis
+        if scores['trend_score'] >= 7:
+            insights.append("📈 Strong upward price trend")
+        elif scores['trend_score'] <= 3:
+            insights.append("📉 Significant price decline")
+        
+        # Momentum Analysis
+        if scores['momentum_score'] >= 7:
+            insights.append("🚀 High positive momentum")
+        elif scores['momentum_score'] <= 3:
+            insights.append("🔻 Negative price momentum")
+        
+        # Volume Analysis
+        if scores['volume_score'] >= 7:
+            insights.append("📊 High trading volume")
+        elif scores['volume_score'] <= 3:
+            insights.append("📊 Low trading volume")
+        
+        # Stability Analysis
+        if scores['stability_score'] >= 7:
+            insights.append("🎯 High price stability")
+        elif scores['stability_score'] <= 3:
+            insights.append("🎯 High price volatility")
+        
+        for insight in insights:
+            st.markdown(f"- {insight}")
+        
+        # Trading Recommendations
+        st.markdown("#### Trading Recommendations")
+        
+        # Buy recommendation
+        st.markdown("**Buyer's Perspective**")
+        if sentiment >= 6 and scores['stability_score'] >= 5:
+            buy_rec = """
+            🟢 **Strong Buy Opportunity**
+            - Market shows strong fundamentals
+            - Good price stability
+            - High potential for value appreciation
+            """
+        elif sentiment >= 4.5:
+            buy_rec = """
+            🟡 **Consider Buying**
+            - Market conditions are favorable
+            - Monitor for optimal entry point
+            - Consider dollar-cost averaging
+            """
+        else:
+            buy_rec = """
+            🔴 **Exercise Caution**
+            - Market shows uncertainty
+            - Higher risk environment
+            - Wait for more favorable conditions
+            """
+        st.markdown(buy_rec)
+        
+        # Sell recommendation
+        st.markdown("**Seller's Perspective**")
+        if sentiment >= 6 and scores['liquidity_score'] >= 5:
+            sell_rec = """
+            🟢 **Favorable Selling Conditions**
+            - Strong market demand
+            - Good liquidity for quick sale
+            - Potential for optimal pricing
+            """
+        elif sentiment >= 4.5:
+            sell_rec = """
+            🟡 **Moderate Selling Opportunity**
+            - Decent market conditions
+            - Consider timing and pricing strategy
+            - Monitor market for best exit point
+            """
+        else:
+            sell_rec = """
+            🔴 **Consider Holding**
+            - Challenging selling environment
+            - May face pricing pressure
+            - Consider waiting for market improvement
+            """
+        st.markdown(sell_rec)
+        
+        # Price Outlook
+        if predictions and predictions.get('predicted_price'):
+            st.markdown("#### Price Outlook")
+            pred_price = predictions['predicted_price']
+            current_price = metrics['avg_price']
+            price_change = ((pred_price - current_price) / current_price) * 100
+            
+            st.markdown(f"""
+            **30-Day Forecast:**
+            - Current Average Price: ${current_price:.2f}
+            - Predicted Price: ${pred_price:.2f}
+            - Expected Change: {price_change:+.1f}%
+            - Confidence: {predictions['confidence']*100:.1f}%
+            """)
 
     @staticmethod
     def display_price_prediction(selected_card: Dict[str, Any], market_data: Dict[str, Any]):
@@ -380,6 +544,124 @@ class CardDisplay:
                 - Low: ${predictions['prediction_range'][0]:.2f}
                 - High: ${predictions['prediction_range'][1]:.2f}
                 """)
+
+    @staticmethod
+    def display_profit_calculator(selected_card: Dict[str, Any], market_data: Dict[str, Any]):
+        """Display profit calculator for a card"""
+        st.markdown("### Profit Calculator")
+        
+        # Initialize calculator
+        calculator = ProfitCalculator()
+        
+        # Get current market value
+        current_value = market_data['metrics']['avg_price']
+        
+        # Get purchase price from user
+        purchase_price = st.number_input(
+            "Enter your purchase price ($)",
+            min_value=0.0,
+            value=0.0,
+            step=0.01,
+            format="%.2f"
+        )
+        
+        # Calculate profit/loss
+        profit_loss = current_value - purchase_price
+        roi = (profit_loss / purchase_price * 100) if purchase_price > 0 else 0
+        
+        # Display results
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric(
+                "Current Market Value",
+                f"${current_value:.2f}",
+                help="Based on recent sales data"
+            )
+        with col2:
+            st.metric(
+                "Profit/Loss",
+                f"${profit_loss:.2f}",
+                f"{roi:.1f}% ROI",
+                delta_color="inverse" if profit_loss < 0 else "normal"
+            )
+        with col3:
+            st.metric(
+                "Return on Investment",
+                f"{roi:.1f}%",
+                help="Percentage return on your investment"
+            )
+        
+        # Get card condition
+        condition = selected_card.get('condition', '').lower()
+        
+        # If card is raw, show grading analysis
+        if condition == 'raw':
+            st.markdown("### Grading Analysis")
+            
+            # Calculate scenarios
+            card_data = {
+                'price': purchase_price,
+                'market_data': market_data,
+                'search_params': st.session_state.search_params
+            }
+            
+            # Calculate PSA 9 scenario
+            psa9_scenario = calculator._calculate_graded_scenario(card_data, 'PSA 9')
+            psa9_price = psa9_scenario['market_price']
+            psa9_source = "Recent PSA 9 Sale" if psa9_scenario['price_source'] == "historical" else "Estimated (1.5x raw value)"
+            
+            # Calculate PSA 10 scenario
+            psa10_scenario = calculator._calculate_graded_scenario(card_data, 'PSA 10')
+            psa10_price = psa10_scenario['market_price']
+            psa10_source = "Recent PSA 10 Sale" if psa10_scenario['price_source'] == "historical" else "Estimated (3.0x raw value)"
+            
+            # Calculate grading costs
+            grading_fee = 25.0
+            shipping_cost = 10.0
+            total_grading_cost = grading_fee + shipping_cost
+            
+            # Calculate break-even prices and profits
+            break_even = purchase_price + total_grading_cost
+            psa9_profit = psa9_price - break_even
+            psa10_profit = psa10_price - break_even
+            
+            # Calculate ROI for each grade
+            psa9_roi = (psa9_profit / break_even * 100) if break_even > 0 else 0
+            psa10_roi = (psa10_profit / break_even * 100) if break_even > 0 else 0
+            
+            # Display grading metrics
+            st.markdown("#### Potential Graded Values")
+            col1, col2 = st.columns(2)
+            with col1:
+                st.metric(
+                    "PSA 9 Value",
+                    f"${psa9_price:.2f}",
+                    f"{psa9_roi:+.1f}% vs Avg",
+                    help=f"Source: {psa9_source}"
+                )
+            with col2:
+                st.metric(
+                    "PSA 10 Value",
+                    f"${psa10_price:.2f}",
+                    f"{psa10_roi:+.1f}% vs Avg",
+                    help=f"Source: {psa10_source}"
+                )
+            
+            # Display break-even analysis
+            st.markdown("#### Break-Even Analysis")
+            st.markdown(f"""
+            - **Total Grading Cost:** ${total_grading_cost:.2f} (Grading: ${grading_fee:.2f} + Shipping: ${shipping_cost:.2f})
+            - **Break-Even Price:** ${break_even:.2f}
+            """)
+            
+            # Quick verdict
+            st.markdown("#### Grading Recommendation")
+            if psa10_profit > total_grading_cost * 2:
+                st.success("🟢 **GRADE IT!** - High profit potential at PSA 10")
+            elif psa9_profit > total_grading_cost:
+                st.info("🔵 **Consider Grading** - Profitable at PSA 9")
+            else:
+                st.warning("🟡 **DON'T GRADE** - Grading costs exceed potential profit")
 
 class SearchForm:
     @staticmethod
@@ -422,81 +704,4 @@ class SearchForm:
                 'variation': variation,
                 'negative_keywords': negative_keywords,
                 'scenario': scenario
-            }
-
-def display_profit_calculator(card_data: List[Dict[str, Any]], market_data: Dict[str, Any]):
-    """Display profit calculator with market data integration."""
-    st.markdown("### Profit Calculator")
-    
-    # Initialize calculator
-    calculator = ProfitCalculator()
-    
-    # Get current market price from card data
-    if card_data:
-        current_price = card_data[0].get('price', 0)
-    else:
-        current_price = 0
-    
-    # Create input fields
-    col1, col2 = st.columns(2)
-    with col1:
-        purchase_price = st.number_input("Purchase Price ($)", min_value=0.0, value=float(current_price))
-        holding_period = st.number_input("Holding Period (months)", min_value=1, value=12)
-    with col2:
-        shipping_cost = st.number_input("Shipping Cost ($)", min_value=0.0, value=5.0)
-        seller_fee = st.number_input("Seller Fee (%)", min_value=0.0, max_value=100.0, value=10.0)
-    
-    # Calculate potential returns
-    if st.button("Calculate Returns"):
-        # Get market trend from market data
-        market_trend = market_data.get('scores', {}).get('trend_score', 5) / 10  # Normalize to 0-1
-        
-        # Calculate returns for different conditions
-        raw_return = calculator.calculate_return(
-            purchase_price=purchase_price,
-            current_price=current_price,
-            holding_period=holding_period,
-            shipping_cost=shipping_cost,
-            seller_fee=seller_fee,
-            market_trend=market_trend
-        )
-        
-        psa9_return = calculator.calculate_return(
-            purchase_price=purchase_price,
-            current_price=current_price * 1.5,  # PSA 9 typically 50% more
-            holding_period=holding_period,
-            shipping_cost=shipping_cost,
-            seller_fee=seller_fee,
-            market_trend=market_trend
-        )
-        
-        psa10_return = calculator.calculate_return(
-            purchase_price=purchase_price,
-            current_price=current_price * 3.0,  # PSA 10 typically 3x more
-            holding_period=holding_period,
-            shipping_cost=shipping_cost,
-            seller_fee=seller_fee,
-            market_trend=market_trend
-        )
-        
-        # Display results
-        st.markdown("#### Potential Returns")
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            st.metric("Raw Card", f"{raw_return:.1f}%", 
-                     help="Return on investment for raw card")
-        with col2:
-            st.metric("PSA 9", f"{psa9_return:.1f}%",
-                     help="Return on investment if graded PSA 9")
-        with col3:
-            st.metric("PSA 10", f"{psa10_return:.1f}%",
-                     help="Return on investment if graded PSA 10")
-        
-        # Display market trend impact
-        st.markdown("#### Market Trend Impact")
-        if market_trend > 0.6:
-            st.success("Strong upward market trend - Favorable for investment")
-        elif market_trend < 0.4:
-            st.warning("Declining market trend - Consider waiting")
-        else:
-            st.info("Stable market trend - Neutral conditions") 
+            } 

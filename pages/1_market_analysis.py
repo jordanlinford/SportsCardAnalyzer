@@ -10,7 +10,7 @@ from modules.core.price_predictor import PricePredictor
 from modules.firebase.user_management import UserManager
 from modules.shared.collection_utils import save_card_to_collection
 from scrapers.ebay_interface import EbayInterface
-from modules.ui.components import CardDisplay, display_profit_calculator
+from modules.ui.components import CardDisplay
 import base64
 import requests
 import re
@@ -19,6 +19,15 @@ import os
 from modules.database.service import DatabaseService
 from modules.database.models import Card, CardCondition
 from typing import List, Dict, Any, Union
+
+def get_score_color(score):
+    """Return color based on score value"""
+    if score >= 8:
+        return "#4CAF50"  # Green for strong scores
+    elif score >= 6:
+        return "#FFC107"  # Yellow for moderate scores
+    else:
+        return "#F44336"  # Red for weak scores
 
 # Add mobile-specific CSS
 st.markdown("""
@@ -176,41 +185,42 @@ def add_to_collection(card_data, market_data):
         player_name = st.session_state.search_params.get('player_name', '')
         
         # Extract card details from title
-        title = card_data['title']
+    except Exception as e:
+        st.error(f"Error adding card to collection: {str(e)}")
+        return
+    title = card_data['title']
+    
+    # Extract year (looking for 4-digit number)
+    year_match = re.search(r'\b\d{4}\b', title)
+    year = year_match.group(0) if year_match else ""
+    
+    # Extract card set (text between year and card number, if present)
+    set_match = re.search(rf'{year}\s+(.*?)(?:\s+#|\s+Card|\s+RC|\s+Rookie|\s+PSA|\s+SGC|\s+BGS|$)', title)
+    card_set = set_match.group(1) if set_match else ""
+    
+    # Extract card number
+    number_match = re.search(r'#(\d+)', title)
+    card_number = number_match.group(1) if number_match else ""
+    
+    # Extract variation (look for common parallel terms)
+    variation_terms = ['Parallel', 'Refractor', 'Prizm', 'Holo', 'Gold', 'Silver', 'Bronze', 
+                      'Red', 'Blue', 'Green', 'Yellow', 'Purple', 'Orange', 'Pink']
+    variation = next((term for term in variation_terms if term.lower() in title.lower()), "")
+    # Add to collection form
+    with st.form("add_to_collection_form"):
+        st.subheader("Add Card to Collection")
         
-        # Extract year (looking for 4-digit number)
-        year_match = re.search(r'\b\d{4}\b', title)
-        year = year_match.group(0) if year_match else ""
-        
-        # Extract card set (text between year and card number, if present)
-        set_match = re.search(rf'{year}\s+(.*?)(?:\s+#|\s+Card|\s+RC|\s+Rookie|\s+PSA|\s+SGC|\s+BGS|$)', title)
-        card_set = set_match.group(1) if set_match else ""
-        
-        # Extract card number
-        number_match = re.search(r'#(\d+)', title)
-        card_number = number_match.group(1) if number_match else ""
-        
-        # Extract variation (look for common parallel terms)
-        variation_terms = ['Parallel', 'Refractor', 'Prizm', 'Holo', 'Gold', 'Silver', 'Bronze', 
-                          'Red', 'Blue', 'Green', 'Yellow', 'Purple', 'Orange', 'Pink']
-        variation = next((term for term in variation_terms if term.lower() in title.lower()), "")
-        
-        # Add to collection form
-        with st.form("add_to_collection_form"):
-            st.subheader("Add Card to Collection")
+        # Create two rows of form fields
+        # First row with three columns
+        col1, col2, col3 = st.columns(3)
             
-            # Create two rows of form fields
-            # First row with three columns
-            col1, col2, col3 = st.columns(3)
-            
-            with col1:
-                player_name = st.text_input("Player Name", value=player_name)
-                year = st.text_input("Year", value=year)
-            
+        with col1:
+            player_name = st.text_input("Player Name", value=player_name)
+            year = st.text_input("Year", value=year)
             with col2:
                 card_set = st.text_input("Card Set", value=card_set)
                 card_number = st.text_input("Card Number", value=card_number)
-            
+        
             with col3:
                 variation = st.text_input("Variation", value=variation)
                 condition = st.selectbox(
@@ -234,14 +244,12 @@ def add_to_collection(card_data, market_data):
                 purchase_date = st.date_input("Purchase Date", value=datetime.now().date())
             
             # Tags field spanning full width
-            tags = st.text_input("Tags (comma-separated)", help="Add tags to help organize your collection")
-            
-            # Notes field spanning full width
-            notes = st.text_area("Notes", height=100)
-            
-            # Submit button spanning full width
-            submitted = st.form_submit_button("Add to Collection", use_container_width=True)
+        tags = st.text_input("Tags (comma-separated)", help="Add tags to help organize your collection")
+        # Notes field spanning full width
+        notes = st.text_area("Notes", height=100)
         
+        # Submit button spanning full width
+        submitted = st.form_submit_button("Add to Collection", use_container_width=True)
         if submitted:
             # Validate required fields
             if not player_name or not year or not card_set:
@@ -272,12 +280,17 @@ def add_to_collection(card_data, market_data):
             else:
                 st.error("Failed to add card to collection")
                 return False
-    
-    except Exception as e:
-        st.error(f"Error adding card to collection: {str(e)}")
-        import traceback
-        st.write("Debug: Error traceback:", traceback.format_exc())
-        return False
+            try:
+                if save_card_to_collection(card_dict):
+                    st.success("Card added to collection successfully!")
+                    return True
+                else:
+                    st.error("Failed to add card to collection")
+                    return False
+            except Exception as e:
+                st.error(f"Error adding card to collection: {str(e)}")
+                st.write("Debug: Error traceback:", traceback.format_exc())
+                return False
 
 def redirect_to_collection_manager(card_data):
     """Redirect to collection manager with pre-populated card data"""
@@ -321,37 +334,37 @@ def display_variations_grid(variation_groups):
                     max_price = max(prices)
                     median_price = sum(prices) / len(prices)
                     
-                    st.markdown(f"""
-                    <div class="variation-card">
-                        <h4>{group['variation_name']}</h4>
-                        <p>Found: {group['count']} listings</p>
-                        <p>Price Range: ${min_price:.2f} - ${max_price:.2f}</p>
-                        <p>Median Price: ${median_price:.2f}</p>
-                    </div>
-                    """, unsafe_allow_html=True)
-                    
-                    if group['representative_image']:
-                        st.image(group['representative_image'], 
-                                use_container_width=True,
-                                output_format="JPEG",
-                                caption=group['variation_name'])
-                    
-                    if st.button("View Details", 
-                             key=f"select_variation_{idx}",
-                             use_container_width=True):
-                        # When button is clicked, update session state with the entire group
-                        st.session_state.selected_variation = group
-                        st.session_state.selected_card = group['cards'][0]  # Keep the first card for display purposes
-                        # Calculate market data for the selected variation
-                        analyzer = MarketAnalyzer()
-                        st.session_state.market_data = analyzer.analyze_market_data(group['cards'])
-                        st.rerun()
-                    
-                    # Add "Add to Collection" button
-                    if st.button("Add to Collection",
-                              key=f"add_to_collection_{idx}",
-                              use_container_width=True):
-                        redirect_to_collection_manager(group['cards'][0])
+                st.markdown(f"""
+                <div class="variation-card">
+                    <h4>{group['variation_name']}</h4>
+                    <p>Found: {group['count']} listings</p>
+                    <p>Price Range: ${min_price:.2f} - ${max_price:.2f}</p>
+                    <p>Median Price: ${median_price:.2f}</p>
+                </div>
+                """, unsafe_allow_html=True)
+                
+                if group['representative_image']:
+                    st.image(group['representative_image'], 
+                            use_container_width=True,
+                            output_format="JPEG",
+                            caption=group['variation_name'])
+                
+                if st.button("View Details", 
+                            key=f"select_variation_{idx}",
+                            use_container_width=True):
+                    # When button is clicked, update session state with the entire group
+                    st.session_state.selected_variation = group
+                    st.session_state.selected_card = group['cards'][0]  # Keep the first card for display purposes
+                    # Calculate market data for the selected variation
+                    analyzer = MarketAnalyzer()
+                    st.session_state.market_data = analyzer.analyze_market_data(group['cards'])
+                    st.rerun()
+
+                # Add "Add to Collection" button
+                if st.button("Add to Collection",
+                            key=f"add_to_collection_{idx}",
+                            use_container_width=True):
+                    redirect_to_collection_manager(group['cards'][0])
     
     except Exception as e:
         st.error(f"Error displaying variations grid: {str(e)}")
@@ -476,31 +489,75 @@ def display_market_analysis(card_data, market_data):
     
     # Display market metrics
     st.markdown("### Market Metrics")
-    col1, col2, col3, col4 = st.columns(4)
+    st.markdown("""
+    Think of these metrics as your card's "report card" for market health. They help you understand:
+    - How strong the market is for this card
+    - Whether prices are trending up or down
+    - How stable the prices are
+    - What a fair price might be
+    """)
     
+    # Define color coding for scores
+    def get_score_color(score):
+        """Return color based on score value"""
+        if score >= 8:
+            return "#4CAF50"  # Green for strong scores
+        elif score >= 6:
+            return "#FFC107"  # Yellow for moderate scores
+        else:
+            return "#F44336"  # Red for weak scores
+    
+    col1, col2, col3, col4 = st.columns(4)
     with col1:
-        st.metric(
-            "Market Health Score",
-            f"{market_health_score:.1f}/10",
-            help="Based on sales volume and price trend"
-        )
+        st.markdown(f"""
+        <div style='text-align: center;'>
+            <h3 style='color: {get_score_color(market_health_score)};'>{market_health_score:.1f}/10</h3>
+            <p>Market Health Score</p>
+        </div>
+        """, unsafe_allow_html=True)
+        st.markdown("""
+        <div style='font-size: 0.8em;'>
+            <p style='color: #4CAF50;'>7-10: Strong market activity</p>
+            <p style='color: #FFC107;'>5-7: Average market activity</p>
+            <p style='color: #F44336;'>Below 5: Weak market interest</p>
+        </div>
+        """, unsafe_allow_html=True)
+    
     with col2:
-        st.metric(
-            "Trend Score",
-            f"{trend_score:.1f}/10",
-            help="Based on price movement direction and strength"
-        )
+        st.markdown(f"""
+        <div style='text-align: center;'>
+            <h3 style='color: {get_score_color(trend_score)};'>{trend_score:.1f}/10</h3>
+            <p>Trend Score</p>
+        </div>
+        """, unsafe_allow_html=True)
+        st.markdown("""
+        <div style='font-size: 0.8em;'>
+            <p style='color: #4CAF50;'>7-10: Rapid price increases</p>
+            <p style='color: #FFC107;'>5-7: Stable prices</p>
+            <p style='color: #F44336;'>Below 5: Declining value</p>
+        </div>
+        """, unsafe_allow_html=True)
+    
     with col3:
-        st.metric(
-            "Volatility Score",
-            f"{volatility_score:.1f}/10",
-            help="Based on price standard deviation"
-        )
+        st.markdown(f"""
+        <div style='text-align: center;'>
+            <h3 style='color: {get_score_color(volatility_score)};'>{volatility_score:.1f}/10</h3>
+            <p>Volatility Score</p>
+        </div>
+        """, unsafe_allow_html=True)
+        st.markdown("""
+        <div style='font-size: 0.8em;'>
+            <p style='color: #4CAF50;'>1-3: Very stable prices</p>
+            <p style='color: #FFC107;'>4-7: Moderate volatility</p>
+            <p style='color: #F44336;'>8-10: Risky price swings</p>
+        </div>
+        """, unsafe_allow_html=True)
+    
     with col4:
         st.metric(
             "Average Sell Price",
             f"${avg_sell_price:.2f}",
-            help="Mean price of last 7 sales"
+            help="The typical selling price based on recent sales. Use this to gauge if you're getting a good deal."
         )
     
     if df is not None and not df.empty:
@@ -527,7 +584,7 @@ def display_market_analysis(card_data, market_data):
             fig.add_trace(go.Scatter(
                 x=df['date'],
                 y=df['moving_avg'],
-                mode='lines',
+                   mode='lines',
                 name=f'{window_size}-Day Moving Average',
                 line=dict(color='red', width=2, dash='dash')
             ))
@@ -540,14 +597,14 @@ def display_market_analysis(card_data, market_data):
         y_max = max_price + (price_range * 0.1)
         
         # Update layout
-        fig.update_layout(
+    fig.update_layout(
             title="Historical Price Trend",
             xaxis_title="Date",
-            yaxis_title="Price ($)",
+        yaxis_title="Price ($)",
             yaxis_range=[y_min, y_max],
             hovermode='x unified',
             showlegend=True,
-            legend=dict(
+        legend=dict(
                 orientation="h",
                 yanchor="bottom",
                 y=1.02,
@@ -557,14 +614,13 @@ def display_market_analysis(card_data, market_data):
         )
         
         # Display the plot
-        st.plotly_chart(fig, use_container_width=True)
-        
-        # Display price prediction
-        st.markdown("### Price Prediction")
-        predictor = PricePredictor()
-        predictions = predictor.predict_future_prices(card_data)
-        
-        if predictions and predictions['predicted_prices']:
+    st.plotly_chart(fig, use_container_width=True)
+    # Display price prediction
+    st.markdown("### Price Prediction")
+    predictor = PricePredictor()
+    predictions = predictor.predict_future_prices(card_data)
+    
+    if predictions and predictions['predicted_prices']:
             # Calculate prediction ranges
             current_price = df['price'].iloc[-1]  # Use last price since we're sorted ascending
             avg_price = last_7_sales['price'].mean()
@@ -593,16 +649,18 @@ def display_market_analysis(card_data, market_data):
             # Display prediction metrics
             col1, col2, col3 = st.columns(3)
             with col1:
+                short_term_change = ((short_term_pred - avg_sell_price) / avg_sell_price) * 100
                 st.metric(
                     "30-Day Forecast",
                     f"${short_term_pred:.2f}",
-                    f"±{short_term_range*100:.1f}%"
+                    f"{short_term_change:+.1f}% vs Avg"
                 )
             with col2:
+                long_term_change = ((long_term_pred - avg_sell_price) / avg_sell_price) * 100
                 st.metric(
-                    "90-Day Forecast",
+                    "90-Day Forecast", 
                     f"${long_term_pred:.2f}",
-                    f"±{long_term_range*100:.1f}%"
+                    f"{long_term_change:+.1f}% vs Avg"
                 )
             with col3:
                 confidence_score = max(1, min(10, (1 - volatility_factor) * 10))
@@ -639,8 +697,22 @@ def display_market_analysis(card_data, market_data):
                 **Long-term (90 days):** {long_term_rec}
                 """)
             
-            # Display profit calculator
-            display_profit_calculator(card_data, market_data)
+            # Get the selected card data for the profit calculator
+            selected_card_data = None
+            if 'selected_variation' in st.session_state and st.session_state.selected_variation:
+                selected_card_data = st.session_state.selected_variation['cards'][0] if st.session_state.selected_variation['cards'] else None
+            elif isinstance(card_data, list) and len(card_data) > 0:
+                selected_card_data = card_data[0]
+            elif isinstance(card_data, dict):
+                selected_card_data = card_data
+            
+            # Display profit calculator with the selected card data
+            if selected_card_data:
+                # Add condition if missing
+                if 'condition' not in selected_card_data:
+                    selected_card_data['condition'] = 'raw'
+                
+                CardDisplay.display_profit_calculator(selected_card_data, market_data)
             
             # Add detailed recommendations section
             st.markdown("---")  # Visual separator
@@ -663,32 +735,22 @@ def display_recommendations(card, market_data):
     # Calculate overall score
     overall_score = (trend_score + (10 - volatility_score) + liquidity_score) / 3
     
-    # Display scores
-    col1, col2, col3, col4 = st.columns(4)
-    with col1:
-        st.metric(
-            "Overall Score",
-            f"{overall_score:.1f}/10",
-            help="Combined score based on trend, volatility, and liquidity"
-        )
-    with col2:
-        st.metric(
-            "Trend Score",
-            f"{trend_score:.1f}/10",
-            help="Based on price movement direction and strength"
-        )
-    with col3:
-        st.metric(
-            "Volatility Score",
-            f"{volatility_score:.1f}/10",
-            help="Based on price standard deviation"
-        )
-    with col4:
-        st.metric(
-            "Liquidity Score",
-            f"{liquidity_score:.1f}/10",
-            help="Based on trading volume and market depth"
-        )
+    # Display overall score prominently
+    st.markdown(f"""
+    <div style='text-align: center; margin: 2rem 0;'>
+        <h1 style='font-size: 3.5rem; color: {get_score_color(overall_score)};'>{overall_score:.1f}/10</h1>
+        <p style='font-size: 1.2rem;'>Overall Market Score</p>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    # Display score interpretation
+    st.markdown("""
+    <div style='text-align: center; margin-bottom: 2rem;'>
+        <p style='font-size: 1.1rem;'>
+            This score combines market trend, stability, and liquidity to provide a comprehensive market assessment.
+        </p>
+    </div>
+    """, unsafe_allow_html=True)
     
     # Buyer's Recommendations
     st.markdown("#### Buyer's Perspective")
@@ -809,129 +871,123 @@ def display_recommendations(card, market_data):
 
 def save_collection_to_firebase(collection_df):
     """Save the user's collection to Firebase"""
-    try:
-        cards = []
-        for idx, row in collection_df.iterrows():
-            try:
-                # Handle dates
-                purchase_date = row.get('purchase_date', '')
-                if not purchase_date or pd.isna(purchase_date):
-                    purchase_date = datetime.now().isoformat()
-                
-                last_updated = row.get('last_updated', '')
-                if not last_updated or pd.isna(last_updated):
-                    last_updated = datetime.now().isoformat()
-                
-                # Handle numeric values
-                try:
-                    purchase_price = float(row.get('purchase_price', 0.0))
-                    if pd.isna(purchase_price):
-                        purchase_price = 0.0
-                except (ValueError, TypeError) as e:
-                    st.warning(f"Warning: Invalid purchase price for card {idx + 1}. Setting to 0.0. Error: {str(e)}")
-                    purchase_price = 0.0
-                
-                try:
-                    current_value = float(row.get('current_value', 0.0))
-                    if pd.isna(current_value):
-                        current_value = 0.0
-                except (ValueError, TypeError) as e:
-                    st.warning(f"Warning: Invalid current value for card {idx + 1}. Setting to 0.0. Error: {str(e)}")
-                    current_value = 0.0
-                
-                try:
-                    roi = float(row.get('roi', 0.0))
-                    if pd.isna(roi):
-                        roi = 0.0
-                except (ValueError, TypeError) as e:
-                    st.warning(f"Warning: Invalid ROI for card {idx + 1}. Setting to 0.0. Error: {str(e)}")
-                    roi = 0.0
-                
-                # Handle photo data
-                photo = row.get('photo')
-                photo_data = "https://placehold.co/300x400/e6e6e6/666666.png?text=No+Card+Image"
-                
-                if photo is not None and not pd.isna(photo):
-                    if isinstance(photo, str):
-                        if photo.startswith('data:image'):
-                            # Already in base64 format
-                            photo_data = photo
-                        elif photo.startswith('http'):
-                            # Valid URL, keep as is
-                            photo_data = photo
-                        else:
-                            try:
-                                # Try to load the image URL
-                                response = requests.get(photo, timeout=10)
-                                response.raise_for_status()
-                                content_type = response.headers.get('content-type', '').lower()
-                                if 'image' in content_type:
-                                    # Convert to base64
-                                    photo_data = f"data:image/jpeg;base64,{base64.b64encode(response.content).decode()}"
-                                    st.write(f"Debug: Successfully converted image URL to base64 for card {idx + 1}")
-                            except Exception as e:
-                                st.warning(f"Failed to process image URL: {str(e)}")
-                    else:
-                        try:
-                            # Handle file upload object
-                            photo_bytes = photo.getvalue()
-                            photo_data = f"data:image/jpeg;base64,{base64.b64encode(photo_bytes).decode()}"
-                            st.write(f"Debug: Successfully converted uploaded image to base64 for card {idx + 1}")
-                        except Exception as photo_error:
-                            st.warning(f"Warning: Could not process photo for card {idx + 1}. Error: {str(photo_error)}")
-                
-                # Handle tags
-                tags = row.get('tags', '')
-                if pd.isna(tags):
-                    tags = []
-                elif isinstance(tags, str):
-                    tags = [tag.strip() for tag in tags.split(',') if tag.strip()]
-                elif not isinstance(tags, list):
-                    tags = []
-                
-                # Create card object with proper type conversion
-                try:
-                    card = Card(
-                        player_name=str(row.get('player_name', '')),
-                        year=str(row.get('year', '')),
-                        card_set=str(row.get('card_set', '')),
-                        card_number=str(row.get('card_number', '')),
-                        variation=str(row.get('variation', '')),
-                        condition=CardCondition.from_string(str(row.get('condition', 'Raw'))),
-                        purchase_price=purchase_price,
-                        purchase_date=datetime.fromisoformat(purchase_date),
-                        current_value=current_value,
-                        last_updated=datetime.fromisoformat(last_updated),
-                        notes=str(row.get('notes', '')),
-                        photo=photo_data,
-                        roi=roi,
-                        tags=tags
-                    )
-                    cards.append(card)
-                    st.write(f"Debug: Successfully processed card {idx + 1}")
-                except Exception as card_error:
-                    st.error(f"Error creating card object for card {idx + 1}: {str(card_error)}")
-                    continue
-            except Exception as card_error:
-                st.error(f"Error processing card {idx + 1}: {str(card_error)}")
-                continue
+    cards = []
+    for idx, row in collection_df.iterrows():
+        # Handle dates
+        purchase_date = row.get('purchase_date', '')
+        if not purchase_date or pd.isna(purchase_date):
+            purchase_date = datetime.now().isoformat()
         
-        if not cards:
-            st.error("No valid cards to save")
-            return False
+        last_updated = row.get('last_updated', '')
+        if not last_updated or pd.isna(last_updated):
+            last_updated = datetime.now().isoformat()
+        
+        # Handle numeric values
+        try:
+            purchase_price = float(row.get('purchase_price', 0.0))
+            if pd.isna(purchase_price):
+                purchase_price = 0.0
+        except (ValueError, TypeError) as e:
+            st.warning(f"Warning: Invalid purchase price for card {idx + 1}. Setting to 0.0. Error: {str(e)}")
+            purchase_price = 0.0
         
         try:
-            with st.spinner("Saving collection to database..."):
-                success = DatabaseService.save_user_collection(st.session_state.uid, cards)
-                if success:
-                    st.success(f"Successfully saved {len(cards)} cards to your collection!")
-            return True
-        except Exception as save_error:
-            st.error(f"Error saving collection: {str(save_error)}")
-            st.write("Debug: Error traceback:", traceback.format_exc())
-            return False
+            current_value = float(row.get('current_value', 0.0))
+            if pd.isna(current_value):
+                current_value = 0.0
+        except (ValueError, TypeError) as e:
+            st.warning(f"Warning: Invalid current value for card {idx + 1}. Setting to 0.0. Error: {str(e)}")
+            current_value = 0.0
+        
+        try:
+            roi = float(row.get('roi', 0.0))
+            if pd.isna(roi):
+                roi = 0.0
+        except (ValueError, TypeError) as e:
+            st.warning(f"Warning: Invalid ROI for card {idx + 1}. Setting to 0.0. Error: {str(e)}")
+            roi = 0.0
+        
+        # Handle photo data
+        photo = row.get('photo')
+        photo_data = "https://placehold.co/300x400/e6e6e6/666666.png?text=No+Card+Image"
+        
+        if photo is not None and not pd.isna(photo):
+            if isinstance(photo, str):
+                if photo.startswith('data:image'):
+                    # Already in base64 format
+                    photo_data = photo
+                elif photo.startswith('http'):
+                    # Valid URL, keep as is
+                    photo_data = photo
+                else:
+                    try:
+                        # Try to load the image URL
+                        response = requests.get(photo, timeout=10)
+                        response.raise_for_status()
+                        content_type = response.headers.get('content-type', '').lower()
+                        if 'image' in content_type:
+                            # Convert to base64
+                            photo_data = f"data:image/jpeg;base64,{base64.b64encode(response.content).decode()}"
+                            st.write(f"Debug: Successfully converted image URL to base64 for card {idx + 1}")
+                    except Exception as e:
+                        st.warning(f"Failed to process image URL: {str(e)}")
+            else:
+                try:
+                    # Handle file upload object
+                    photo_bytes = photo.getvalue()
+                    photo_data = f"data:image/jpeg;base64,{base64.b64encode(photo_bytes).decode()}"
+                    st.write(f"Debug: Successfully converted uploaded image to base64 for card {idx + 1}")
+                except Exception as photo_error:
+                    st.warning(f"Warning: Could not process photo for card {idx + 1}. Error: {str(photo_error)}")
+        
+        # Handle tags
+        tags = row.get('tags', '')
+        if pd.isna(tags):
+            tags = []
+        elif isinstance(tags, str):
+            tags = [tag.strip() for tag in tags.split(',') if tag.strip()]
+        elif not isinstance(tags, list):
+            tags = []
+        
+        # Create card object with proper type conversion
+        try:
+            card = Card(
+                player_name=str(row.get('player_name', '')),
+                year=str(row.get('year', '')),
+                card_set=str(row.get('card_set', '')),
+                card_number=str(row.get('card_number', '')),
+                variation=str(row.get('variation', '')),
+                condition=CardCondition.from_string(str(row.get('condition', 'Raw'))),
+                purchase_price=purchase_price,
+                purchase_date=datetime.fromisoformat(purchase_date),
+                current_value=current_value,
+                last_updated=datetime.fromisoformat(last_updated),
+                notes=str(row.get('notes', '')),
+                photo=photo_data,
+                roi=roi,
+                tags=tags
+            )
+            cards.append(card)
+            st.write(f"Debug: Successfully processed card {idx + 1}")
+        except Exception as card_error:
+            st.error(f"Error creating card object for card {idx + 1}: {str(card_error)}")
+            continue
+    
+    if not cards:
+        st.error("No valid cards to save")
+        return False
+    
+    try:
+        with st.spinner("Saving collection to database..."):
+            success = DatabaseService.save_user_collection(st.session_state.uid, cards)
+            if success:
+                st.success(f"Successfully saved {len(cards)} cards to your collection!")
+                return True
+            else:
+                st.error("Failed to save collection")
+                return False
     except Exception as e:
-        st.error(f"Error in save_collection_to_firebase: {str(e)}")
+        st.error(f"Error saving collection: {str(e)}")
         st.write("Debug: Error traceback:", traceback.format_exc())
         return False
 
@@ -992,19 +1048,15 @@ def export_collection_backup():
 def display_search_form():
     """Display the search form for card search"""
     with st.form("search_form"):
-        cols = st.columns(3)
-        with cols[0]:
-            player_name = st.text_input("Player Name")
-            year = st.text_input("Year")
-            card_set = st.text_input("Card Set")
-        
-        with cols[1]:
-            card_number = st.text_input("Card Number")
-            variation = st.text_input("Variation")
-            condition = st.selectbox("Condition", [
-                "Raw", "PSA 10", "PSA 9", 
-                "SGC 10", "SGC 9.5", "SGC 9"
-            ])
+        player_name = st.text_input("Player Name")
+        year = st.text_input("Year")
+        card_set = st.text_input("Card Set")
+        card_number = st.text_input("Card Number")
+        variation = st.text_input("Variation")
+        condition = st.selectbox("Condition", [
+            "Raw", "PSA 10", "PSA 9", 
+            "SGC 10", "SGC 9.5", "SGC 9"
+        ])
         
         negative_keywords = st.text_input(
             "Exclude Keywords (comma-separated)",
@@ -1063,6 +1115,79 @@ def display_profit_calculator(card_data, market_data):
             f"{roi:.1f}%",
             help="Percentage return on your investment"
         )
+    
+    # Get card condition
+    condition = None
+    if isinstance(card_data, dict):
+        condition = card_data.get('condition', '').lower()
+    elif isinstance(card_data, list) and len(card_data) > 0:
+        condition = card_data[0].get('condition', '').lower()
+    
+    # If card is raw, show grading analysis
+    if condition == 'raw':
+        st.markdown("### Grading Analysis")
+        
+        # Get PSA 9 and PSA 10 prices
+        psa9_price = current_value * 1.5  # Default multiplier
+        psa10_price = current_value * 3.0  # Default multiplier
+        
+        # Search for actual PSA 9 and PSA 10 sales in market data
+        if isinstance(market_data.get('sales', []), list):
+            psa9_sales = [sale for sale in market_data['sales'] if 'psa 9' in sale.get('title', '').lower()]
+            psa10_sales = [sale for sale in market_data['sales'] if 'psa 10' in sale.get('title', '').lower()]
+            
+            if psa9_sales:
+                psa9_price = psa9_sales[0]['price']
+            if psa10_sales:
+                psa10_price = psa10_sales[0]['price']
+        
+        # Calculate grading costs
+        grading_fee = 25.0
+        shipping_cost = 10.0
+        total_grading_cost = grading_fee + shipping_cost
+        
+        # Calculate break-even prices and profits
+        break_even = purchase_price + total_grading_cost
+        psa9_profit = psa9_price - break_even
+        psa10_profit = psa10_price - break_even
+        
+        # Calculate ROI for each grade
+        psa9_roi = (psa9_profit / break_even * 100) if break_even > 0 else 0
+        psa10_roi = (psa10_profit / break_even * 100) if break_even > 0 else 0
+        
+        # Display grading metrics
+        st.markdown("#### Potential Graded Values")
+        col1, col2 = st.columns(2)
+        with col1:
+            st.metric(
+                "PSA 9 Value",
+                f"${psa9_price:.2f}",
+                f"{psa9_roi:+.1f}% vs Avg",
+                help="Estimated value if graded PSA 9"
+            )
+        with col2:
+            st.metric(
+                "PSA 10 Value",
+                f"${psa10_price:.2f}",
+                f"{psa10_roi:+.1f}% vs Avg",
+                help="Estimated value if graded PSA 10"
+            )
+        
+        # Display break-even analysis
+        st.markdown("#### Break-Even Analysis")
+        st.markdown(f"""
+        - **Total Grading Cost:** ${total_grading_cost:.2f} (Grading: ${grading_fee:.2f} + Shipping: ${shipping_cost:.2f})
+        - **Break-Even Price:** ${break_even:.2f}
+        """)
+        
+        # Quick verdict
+        st.markdown("#### Grading Recommendation")
+        if psa10_profit > total_grading_cost * 2:
+            st.success("🟢 **GRADE IT!** - High profit potential at PSA 10")
+        elif psa9_profit > total_grading_cost:
+            st.info("🔵 **Consider Grading** - Profitable at PSA 9")
+        else:
+            st.warning("🟡 **DON'T GRADE** - Grading costs exceed potential profit")
 
 def display_image(image_url):
     """Display card image with proper formatting"""

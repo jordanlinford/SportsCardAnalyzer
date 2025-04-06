@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sports Card Analyzer - Authentication</title>
+    <script src="https://www.gstatic.com/firebasejs/9.6.0/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.6.0/firebase-auth-compat.js"></script>
+    <style>
+      body {
+        font-family: Arial, sans-serif;
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        height: 100vh;
+        margin: 0;
+        background-color: #f5f5f5;
+      }
+      .container {
+        text-align: center;
+        padding: 20px;
+        background-color: white;
+        border-radius: 8px;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+      }
+      button {
+        background-color: #4285f4;
+        color: white;
+        border: none;
+        padding: 10px 20px;
+        border-radius: 4px;
+        cursor: pointer;
+        font-size: 16px;
+        margin: 10px;
+      }
+      button:hover {
+        background-color: #357abd;
+      }
+      .status {
+        margin-top: 20px;
+        padding: 10px;
+        border-radius: 4px;
+      }
+      .success {
+        background-color: #d4edda;
+        color: #155724;
+      }
+      .error {
+        background-color: #f8d7da;
+        color: #721c24;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <h1>Sports Card Analyzer</h1>
+      <p>Please sign in with Google to continue</p>
+      <button id="googleSignIn">Sign in with Google</button>
+      <div id="status" class="status"></div>
+    </div>
+
+    <script>
+      // Your web app's Firebase configuration
+      const firebaseConfig = {
+        apiKey: "AIzaSyAfb2YtBxD5YEWrNpG0J3GN_g0ZfPzsoOE",
+        authDomain: "sports-card-analyzer.firebaseapp.com",
+        projectId: "sports-card-analyzer",
+        storageBucket: "sports-card-analyzer.firebasestorage.app",
+        messagingSenderId: "27312906394",
+        appId: "1:27312906394:web:11296b8bb530daad5a7f23"
+      };
+
+      // Initialize Firebase
+      firebase.initializeApp(firebaseConfig);
+      const auth = firebase.auth();
+
+      // Google Sign In
+      document.getElementById('googleSignIn').addEventListener('click', () => {
+        const provider = new firebase.auth.GoogleAuthProvider();
+        auth.signInWithPopup(provider)
+          .then((result) => {
+            // Store the ID token in localStorage
+            result.user.getIdToken().then((idToken) => {
+              localStorage.setItem('firebaseIdToken', idToken);
+              localStorage.setItem('firebaseUser', JSON.stringify({
+                uid: result.user.uid,
+                email: result.user.email,
+                displayName: result.user.displayName
+              }));
+              
+              document.getElementById('status').className = 'status success';
+              document.getElementById('status').textContent = 'Sign in successful! You can close this window and return to the app.';
+              
+              // Notify the Streamlit app
+              window.opener.postMessage({
+                type: 'auth_success',
+                token: idToken,
+                user: {
+                  uid: result.user.uid,
+                  email: result.user.email,
+                  displayName: result.user.displayName
+                }
+              }, '*');
+            });
+          })
+          .catch((error) => {
+            document.getElementById('status').className = 'status error';
+            document.getElementById('status').textContent = `Error: ${error.message}`;
+          });
+      });
+
+      // Check if user is already signed in
+      auth.onAuthStateChanged((user) => {
+        if (user) {
+          user.getIdToken().then((idToken) => {
+            localStorage.setItem('firebaseIdToken', idToken);
+            localStorage.setItem('firebaseUser', JSON.stringify({
+              uid: user.uid,
+              email: user.email,
+              displayName: user.displayName
+            }));
+            
+            document.getElementById('status').className = 'status success';
+            document.getElementById('status').textContent = 'You are already signed in. You can close this window and return to the app.';
+            
+            // Notify the Streamlit app
+            window.opener.postMessage({
+              type: 'auth_success',
+              token: idToken,
+              user: {
+                uid: user.uid,
+                email: user.email,
+                displayName: user.displayName
+              }
+            }, '*');
+          });
+        }
+      });
+    </script>
+  </body>
+</html>

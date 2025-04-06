@@ -97,11 +97,33 @@ class DatabaseService:
                                     # Validate base64 content
                                     try:
                                         base64_part = photo.split(',')[1]
-                                        # Check size before decoding
-                                        if len(base64_part) > 500 * 1024:  # 500KB limit
+                                        # Check size before decoding - increased to 2MB
+                                        if len(base64_part) > 2 * 1024 * 1024:  # 2MB limit
                                             print(f"Warning: Photo data too large for card {card.get('player_name', 'Unknown')}")
-                                            photo = ''
+                                            # Try to compress the image
+                                            try:
+                                                import io
+                                                from PIL import Image
+                                                # Decode base64 to image
+                                                img_data = base64.b64decode(base64_part)
+                                                img = Image.open(io.BytesIO(img_data))
+                                                # Convert to RGB if necessary
+                                                if img.mode != 'RGB':
+                                                    img = img.convert('RGB')
+                                                # Calculate new size while maintaining aspect ratio
+                                                ratio = min(800/img.size[0], 1000/img.size[1])
+                                                new_size = (int(img.size[0]*ratio), int(img.size[1]*ratio))
+                                                img = img.resize(new_size, Image.LANCZOS)
+                                                # Save with compression
+                                                buffer = io.BytesIO()
+                                                img.save(buffer, format='JPEG', quality=85, optimize=True)
+                                                # Convert back to base64
+                                                photo = f"data:image/jpeg;base64,{base64.b64encode(buffer.getvalue()).decode()}"
+                                            except Exception as compress_error:
+                                                print(f"Warning: Failed to compress image for card {card.get('player_name', 'Unknown')}. Error: {str(compress_error)}")
+                                                photo = ''
                                         else:
+                                            # Validate the base64 content
                                             base64.b64decode(base64_part)
                                     except Exception as e:
                                         print(f"Warning: Invalid base64 image data for card {card.get('player_name', 'Unknown')}. Error: {str(e)}")
@@ -140,11 +162,33 @@ class DatabaseService:
                                     # Validate base64 content
                                     try:
                                         base64_part = photo.split(',')[1]
-                                        # Check size before decoding
-                                        if len(base64_part) > 500 * 1024:  # 500KB limit
+                                        # Check size before decoding - increased to 2MB
+                                        if len(base64_part) > 2 * 1024 * 1024:  # 2MB limit
                                             print(f"Warning: Photo data too large for card {card.player_name}")
-                                            photo = ''
+                                            # Try to compress the image
+                                            try:
+                                                import io
+                                                from PIL import Image
+                                                # Decode base64 to image
+                                                img_data = base64.b64decode(base64_part)
+                                                img = Image.open(io.BytesIO(img_data))
+                                                # Convert to RGB if necessary
+                                                if img.mode != 'RGB':
+                                                    img = img.convert('RGB')
+                                                # Calculate new size while maintaining aspect ratio
+                                                ratio = min(800/img.size[0], 1000/img.size[1])
+                                                new_size = (int(img.size[0]*ratio), int(img.size[1]*ratio))
+                                                img = img.resize(new_size, Image.LANCZOS)
+                                                # Save with compression
+                                                buffer = io.BytesIO()
+                                                img.save(buffer, format='JPEG', quality=85, optimize=True)
+                                                # Convert back to base64
+                                                photo = f"data:image/jpeg;base64,{base64.b64encode(buffer.getvalue()).decode()}"
+                                            except Exception as compress_error:
+                                                print(f"Warning: Failed to compress image for card {card.player_name}. Error: {str(compress_error)}")
+                                                photo = ''
                                         else:
+                                            # Validate the base64 content
                                             base64.b64decode(base64_part)
                                     except Exception as e:
                                         print(f"Warning: Invalid base64 image data for card {card.player_name}. Error: {str(e)}")

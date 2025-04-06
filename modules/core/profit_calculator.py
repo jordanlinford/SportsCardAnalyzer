@@ -149,6 +149,9 @@ class ProfitCalculator:
         recent_sales = []
         sales_count = 0
         
+        # Get raw price from card data
+        raw_price = float(card_data.get('price', 0.0))
+        
         # Get the original search parameters
         search_params = card_data.get('search_params', {})
         if search_params:
@@ -170,7 +173,11 @@ class ProfitCalculator:
             # Search for graded sales
             try:
                 graded_results = self.scraper.search_cards(
-                    query=graded_query,
+                    player_name=player_name,
+                    year=year,
+                    card_set=card_set,
+                    card_number=card_number,
+                    variation=variation,
                     scenario=target_grade
                 )
                 
@@ -208,10 +215,14 @@ class ProfitCalculator:
         if market_price == 0:
             # Get raw market price from market_data
             market_data = card_data.get('market_data', {})
-            raw_price = float(market_data.get('median_price', 0.0))
+            raw_price = float(market_data.get('median_price', raw_price))  # Use existing raw_price as fallback
             
-            # Apply grading multiplier
-            multiplier = 2 if target_grade == "PSA 9" else 4
+            # Adjust multiplier based on card value
+            if raw_price >= 200:  # Higher multipliers for valuable cards
+                multiplier = 2.0 if target_grade == "PSA 9" else 4.0
+            else:  # Conservative multipliers for lower value cards
+                multiplier = 1.5 if target_grade == "PSA 9" else 2.5
+            
             market_price = raw_price * multiplier
             price_source = "estimated"
         
@@ -221,6 +232,37 @@ class ProfitCalculator:
         grading_cost = self.grading_params['grading_costs'][grading_service]
         shipping_cost = card_data.get('shipping_cost', 0.0)
         seller_fee_percentage = float(card_data.get('seller_fee_percentage', 0.0))
+        
+        # Adjust probabilities based on card condition and value
+        condition = card_data.get('condition', '').lower()
+        condition_multiplier = {
+            'near mint-mint': 1.4,  # Increased from 1.2
+            'near mint': 1.2,       # Increased from 1.0
+            'excellent-mint': 0.9,   # Increased from 0.8
+            'excellent': 0.7,        # Increased from 0.6
+            'very good-excellent': 0.5,
+            'very good': 0.3,
+            'good': 0.2,
+            'fair': 0.1,
+            'poor': 0.05
+        }.get(condition, 1.0)
+        
+        # Additional multiplier for valuable cards (better packaging/handling)
+        if raw_price >= 200:
+            condition_multiplier *= 1.2
+        
+        # Calculate success probability with condition adjustment
+        if target_grade == "PSA 9":
+            base_probability = self.grading_params['psa9_probability']
+            success_probability = min(0.95, base_probability * condition_multiplier)
+        else:  # PSA 10
+            base_probability = self.grading_params['psa10_probability']
+            success_probability = min(0.90, base_probability * condition_multiplier)
+        
+        # Adjust lower grade probability based on condition and value
+        base_lower_grade = self.grading_params['lower_grade_probability']
+        value_factor = min(1.0, max(0.5, 200 / raw_price)) if raw_price > 0 else 1.0
+        lower_grade_probability = max(0.05, base_lower_grade * (2 - condition_multiplier) * value_factor)
         
         # Calculate fees based on market price
         seller_fee_amount = market_price * (seller_fee_percentage / 100)
@@ -238,12 +280,6 @@ class ProfitCalculator:
         total_costs = base_costs + seller_fee_amount
         
         # Calculate expected value based on grade probabilities
-        if target_grade == "PSA 9":
-            success_probability = self.grading_params['psa9_probability']
-        else:  # PSA 10
-            success_probability = self.grading_params['psa10_probability']
-        
-        # Calculate expected value and risk-adjusted returns
         expected_value = market_price * success_probability
         net_profit = expected_value - total_costs
         roi = (net_profit / purchase_price * 100) if purchase_price > 0 else 0
@@ -275,7 +311,8 @@ class ProfitCalculator:
             'expected_completion': expected_completion.strftime('%Y-%m-%d'),
             'timeline': f"{grading_time} days for grading + shipping time",
             'risk_level': 'High - depends on card condition and grading standards',
-            'lower_grade_probability': self.grading_params['lower_grade_probability'] * 100
+            'lower_grade_probability': lower_grade_probability * 100,
+            'sales': recent_sales  # Add the sales field to match what the UI expects
         }
 
     def _calculate_psa9_scenario(self, card_data: Dict[str, Any]) -> Dict[str, Any]:
@@ -294,65 +331,46 @@ class ProfitCalculator:
         if 'market_data' in st.session_state:
             card_data['market_data'] = st.session_state.market_data
         
-        # Common input fields for all scenarios at the top
-        st.markdown("#### Cost Inputs")
-        col1, col2 = st.columns(2)
+        # Break-even analysis section
+        st.markdown("#### Break-Even Analysis")
+        col1, col2, col3 = st.columns(3)
         
         with col1:
-            purchase_price = st.number_input(
-                "Purchase Price ($)",
+            grading_cost = st.number_input(
+                "Grading Cost ($)",
                 min_value=0.0,
-                value=0.0,
+                value=25.0,
                 step=1.0,
-                key="purchase_price",
-                help="The price you paid or plan to pay for the card"
-            )
-            shipping_cost = st.number_input(
-                "Shipping Cost ($)",
-                min_value=0.0,
-                value=0.0,
-                step=0.5,
-                key="shipping_cost",
-                help="Total shipping costs (both buying and selling)"
+                key="grading_cost",
+                help="Cost to grade the card"
             )
         
         with col2:
+            shipping_cost = st.number_input(
+                "Shipping Cost ($)",
+                min_value=0.0,
+                value=10.0,
+                step=1.0,
+                key="shipping_cost",
+                help="Cost to ship the card"
+            )
+        
+        with col3:
             seller_fee_percentage = st.number_input(
                 "Seller Fee (%)",
                 min_value=0.0,
                 max_value=100.0,
-                value=0.0,  # Default to 0
+                value=12.9,
                 step=0.1,
                 key="seller_fee",
                 help="Platform selling fees (e.g., eBay typically charges 12.9% for cards)"
             )
-            grading_service = st.selectbox(
-                "Grading Service Level",
-                options=['n/a', 'economy', 'regular', 'express', 'other'],
-                index=0,  # Default to 'n/a'
-                key="grading_service",
-                help="Choose grading service level - affects both cost and turnaround time"
-            )
-            
-            # Add custom grading cost input if 'other' is selected
-            if grading_service == 'other':
-                custom_grading_cost = st.number_input(
-                    "Custom Grading Cost ($)",
-                    min_value=0.0,
-                    value=0.0,
-                    step=1.0,
-                    key="custom_grading_cost",
-                    help="Enter your custom grading service cost"
-                )
-                # Update grading params with custom cost
-                self.grading_params['grading_costs']['other'] = custom_grading_cost
-
+        
         # Update card data with user inputs
         card_data.update({
-            'price': purchase_price,
+            'grading_cost': grading_cost,
             'shipping_cost': shipping_cost,
-            'seller_fee_percentage': seller_fee_percentage,
-            'grading_service': grading_service
+            'seller_fee_percentage': seller_fee_percentage
         })
         
         # Create tabs for different scenarios
@@ -501,3 +519,94 @@ class ProfitCalculator:
         roi = (adjusted_profit / purchase_price * 100) if purchase_price > 0 else 0
         
         return roi
+
+def test_grading_analysis():
+    """Test function to verify grading analysis functionality."""
+    calculator = ProfitCalculator()
+    
+    # Test Case 1: Lower value card
+    test_card_1 = {
+        'title': '2023 Prizm Justin Jefferson',
+        'price': 50.0,
+        'shipping_cost': 5.0,
+        'seller_fee_percentage': 12.9,
+        'grading_service': 'economy',
+        'condition': 'near mint',
+        'search_params': {
+            'player_name': 'Justin Jefferson',
+            'year': '2023',
+            'card_set': 'Prizm',
+            'variation': 'Base'
+        },
+        'market_data': {
+            'median_price': 75.0,
+            'sales_count': 15
+        }
+    }
+    
+    # Test Case 2: Higher value card
+    test_card_2 = {
+        'title': '2020 Prizm Justin Herbert Rookie',
+        'price': 200.0,
+        'shipping_cost': 5.0,
+        'seller_fee_percentage': 12.9,
+        'grading_service': 'economy',
+        'condition': 'near mint-mint',
+        'search_params': {
+            'player_name': 'Justin Herbert',
+            'year': '2020',
+            'card_set': 'Prizm',
+            'variation': 'Base Rookie'
+        },
+        'market_data': {
+            'median_price': 300.0,
+            'sales_count': 25
+        }
+    }
+    
+    print("\n=== Grading Analysis Test Results ===")
+    
+    # Test Case 1 Results
+    print("\nTest Case 1: Lower Value Card")
+    print("-----------------------------")
+    
+    psa9_results_1 = calculator._calculate_graded_scenario(test_card_1, "PSA 9")
+    psa10_results_1 = calculator._calculate_graded_scenario(test_card_1, "PSA 10")
+    
+    print("\nPSA 9 Scenario:")
+    print(f"- Market Price: ${psa9_results_1['market_price']:.2f}")
+    print(f"- Success Probability: {psa9_results_1['success_probability']:.1f}%")
+    print(f"- Net Profit: ${psa9_results_1['net_profit']:.2f}")
+    print(f"- ROI: {psa9_results_1['roi']:.1f}%")
+    print(f"- Lower Grade Risk: {psa9_results_1['lower_grade_probability']:.1f}%")
+    
+    print("\nPSA 10 Scenario:")
+    print(f"- Market Price: ${psa10_results_1['market_price']:.2f}")
+    print(f"- Success Probability: {psa10_results_1['success_probability']:.1f}%")
+    print(f"- Net Profit: ${psa10_results_1['net_profit']:.2f}")
+    print(f"- ROI: {psa10_results_1['roi']:.1f}%")
+    print(f"- Lower Grade Risk: {psa10_results_1['lower_grade_probability']:.1f}%")
+    
+    # Test Case 2 Results
+    print("\nTest Case 2: Higher Value Card")
+    print("-----------------------------")
+    
+    psa9_results_2 = calculator._calculate_graded_scenario(test_card_2, "PSA 9")
+    psa10_results_2 = calculator._calculate_graded_scenario(test_card_2, "PSA 10")
+    
+    print("\nPSA 9 Scenario:")
+    print(f"- Market Price: ${psa9_results_2['market_price']:.2f}")
+    print(f"- Success Probability: {psa9_results_2['success_probability']:.1f}%")
+    print(f"- Net Profit: ${psa9_results_2['net_profit']:.2f}")
+    print(f"- ROI: {psa9_results_2['roi']:.1f}%")
+    print(f"- Lower Grade Risk: {psa9_results_2['lower_grade_probability']:.1f}%")
+    
+    print("\nPSA 10 Scenario:")
+    print(f"- Market Price: ${psa10_results_2['market_price']:.2f}")
+    print(f"- Success Probability: {psa10_results_2['success_probability']:.1f}%")
+    print(f"- Net Profit: ${psa10_results_2['net_profit']:.2f}")
+    print(f"- ROI: {psa10_results_2['roi']:.1f}%")
+    print(f"- Lower Grade Risk: {psa10_results_2['lower_grade_probability']:.1f}%")
+
+if __name__ == "__main__":
+    test_grading_analysis()

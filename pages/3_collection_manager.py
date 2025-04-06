@@ -17,6 +17,7 @@ from modules.ui.styles import get_collection_styles
 from io import BytesIO
 import json
 from modules.core.card_value_analyzer import CardValueAnalyzer # type: ignore
+from modules.ui.components import CardDisplay  # Updated import path
 
 # Configure the page
 st.set_page_config(
@@ -690,98 +691,21 @@ def display_collection_grid(filtered_collection, is_shared=False):
                 elif hasattr(card, 'photo'):
                     photo = card.photo
                 
-                if photo:
-                    try:
-                        # Handle base64 images
-                        if isinstance(photo, str) and photo.startswith('data:image'):
-                            try:
-                                # Validate base64 string
-                                base64_part = photo.split(',')[1]
-                                base64.b64decode(base64_part)
-                                st.image(photo, use_container_width=True)
-                            except Exception as e:
-                                st.warning(f"Invalid base64 image for card {idx + 1}")
-                                st.image("https://placehold.co/300x400/e6e6e6/666666.png?text=Invalid+Image", use_container_width=True)
-                        # Handle URL images
-                        elif isinstance(photo, str) and (photo.startswith('http://') or photo.startswith('https://')):
-                            try:
-                                response = requests.head(photo, timeout=5)
-                                if response.status_code == 200:
-                                    st.image(photo, use_container_width=True)
-                                else:
-                                    st.warning(f"Invalid image URL for card {idx + 1}")
-                                    st.image("https://placehold.co/300x400/e6e6e6/666666.png?text=Invalid+Image", use_container_width=True)
-                            except Exception as e:
-                                st.warning(f"Failed to load image URL for card {idx + 1}")
-                                st.image("https://placehold.co/300x400/e6e6e6/666666.png?text=Invalid+Image", use_container_width=True)
-                        # Handle file upload objects
-                        elif hasattr(photo, 'getvalue'):
-                            try:
-                                st.image(photo, use_container_width=True)
-                            except Exception as e:
-                                st.warning(f"Failed to load uploaded image for card {idx + 1}")
-                                st.image("https://placehold.co/300x400/e6e6e6/666666.png?text=Invalid+Image", use_container_width=True)
-                        # Handle array/list of photos
-                        elif isinstance(photo, (list, tuple)) and photo:
-                            # Take the first photo from the array
-                            first_photo = photo[0]
-                            if isinstance(first_photo, str):
-                                if first_photo.startswith('data:image'):
-                                    try:
-                                        base64_part = first_photo.split(',')[1]
-                                        base64.b64decode(base64_part)
-                                        st.image(first_photo, use_container_width=True)
-                                    except Exception as e:
-                                        st.warning(f"Invalid base64 image in array for card {idx + 1}")
-                                        st.image("https://placehold.co/300x400/e6e6e6/666666.png?text=Invalid+Image", use_container_width=True)
-                                elif first_photo.startswith('http://') or first_photo.startswith('https://'):
-                                    try:
-                                        response = requests.head(first_photo, timeout=5)
-                                        if response.status_code == 200:
-                                            st.image(first_photo, use_container_width=True)
-                                        else:
-                                            st.warning(f"Invalid image URL in array for card {idx + 1}")
-                                            st.image("https://placehold.co/300x400/e6e6e6/666666.png?text=Invalid+Image", use_container_width=True)
-                                    except Exception as e:
-                                        st.warning(f"Failed to load image URL in array for card {idx + 1}")
-                                        st.image("https://placehold.co/300x400/e6e6e6/666666.png?text=Invalid+Image", use_container_width=True)
-                            elif hasattr(first_photo, 'getvalue'):
-                                try:
-                                    st.image(first_photo, use_container_width=True)
-                                except Exception as e:
-                                    st.warning(f"Failed to load uploaded image in array for card {idx + 1}")
-                                    st.image("https://placehold.co/300x400/e6e6e6/666666.png?text=Invalid+Image", use_container_width=True)
-                            else:
-                                st.warning(f"Invalid image format in array for card {idx + 1}")
-                                st.image("https://placehold.co/300x400/e6e6e6/666666.png?text=Invalid+Image", use_container_width=True)
-                        else:
-                            st.warning(f"Invalid image format for card {idx + 1}")
-                            st.image("https://placehold.co/300x400/e6e6e6/666666.png?text=Invalid+Image", use_container_width=True)
-                    except Exception as e:
-                        st.warning(f"Failed to load image for card {idx + 1}")
-                        st.image("https://placehold.co/300x400/e6e6e6/666666.png?text=Invalid+Image", use_container_width=True)
-                else:
-                    st.image("https://placehold.co/300x400/e6e6e6/666666.png?text=No+Image", use_container_width=True)
+                # Use the improved CardDisplay method
+                CardDisplay.display_image(photo, show_placeholder=True)
                 
                 # Safely get card details
                 player_name = card.get('player_name', '') if isinstance(card, dict) else getattr(card, 'player_name', '')
                 year = card.get('year', '') if isinstance(card, dict) else getattr(card, 'year', '')
                 card_set = card.get('card_set', '') if isinstance(card, dict) else getattr(card, 'card_set', '')
                 card_number = card.get('card_number', '') if isinstance(card, dict) else getattr(card, 'card_number', '')
-                condition = card.get('condition', '') if isinstance(card, dict) else getattr(card, 'condition', '')
-                current_value = card.get('current_value', 0) if isinstance(card, dict) else getattr(card, 'current_value', 0)
-                roi = card.get('roi', 0) if isinstance(card, dict) else getattr(card, 'roi', 0)
-                tags = card.get('tags', []) if isinstance(card, dict) else getattr(card, 'tags', [])
                 
                 # Display card details
                 st.markdown(f"""
-                <div style="background: rgba(0, 0, 0, 0.7); padding: 1rem; border-radius: 10px; margin-bottom: 1rem;">
-                    <h4 style="color: white; margin-bottom: 0.5rem;">{player_name} {year}</h4>
-                    <p style="margin: 0.25rem 0;">{card_set} #{card_number}</p>
-                    <p style="margin: 0.25rem 0;">Condition: {condition}</p>
-                    <p style="margin: 0.25rem 0; font-weight: bold;">Value: ${current_value:,.2f}</p>
-                    <p style="margin: 0.25rem 0;">ROI: {roi:+.1f}%</p>
-                    <p style="margin: 0.25rem 0;">Tags: {', '.join(tags) if tags else 'None'}</p>
+                <div style="padding: 1rem;">
+                    <h4>{player_name}</h4>
+                    <p>{year} {card_set}</p>
+                    <p>#{card_number}</p>
                 </div>
                 """, unsafe_allow_html=True)
                 

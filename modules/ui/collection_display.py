@@ -33,62 +33,48 @@ def display_collection_grid(filtered_df, is_shared=False):
         with st.container():
             # Handle image display
             photo_url = safe_get(card, 'photo', '')
-            if not photo_url or pd.isna(photo_url):
-                photo_url = "https://placehold.co/300x400/e6e6e6/666666.png?text=No+Card+Image"
-            elif photo_url.startswith('data:image'):
-                # Handle base64 images
+            
+            # Create a column for the image and details
+            col1, col2 = st.columns([1, 1])
+            
+            with col1:
                 try:
-                    # Validate base64 string
-                    base64_part = photo_url.split(',')[1]
-                    # Try to decode to ensure it's valid
-                    base64.b64decode(base64_part)
-                    # Display base64 image
-                    st.image(photo_url, use_container_width=True)
-                except Exception as e:
-                    st.error(f"Error displaying base64 image for card {idx + 1}: {str(e)}")
-                    photo_url = "https://placehold.co/300x400/e6e6e6/666666.png?text=Base64+Error"
-            else:
-                # Handle URL images
-                try:
-                    # Test if URL is valid
-                    response = requests.head(photo_url, timeout=5)
-                    if response.status_code != 200:
-                        st.warning(f"Invalid image URL status code {response.status_code} for card {idx + 1}")
-                        photo_url = "https://placehold.co/300x400/e6e6e6/666666.png?text=Invalid+URL"
+                    if not photo_url or pd.isna(photo_url):
+                        st.image("https://placehold.co/300x400/e6e6e6/666666.png?text=No+Card+Image", use_container_width=True)
+                    elif photo_url.startswith('data:image'):
+                        # Handle base64 images
+                        try:
+                            # Validate base64 string
+                            base64_part = photo_url.split(',')[1]
+                            base64.b64decode(base64_part)
+                            st.image(photo_url, use_container_width=True)
+                        except Exception as e:
+                            st.image("https://placehold.co/300x400/e6e6e6/666666.png?text=Invalid+Image", use_container_width=True)
+                            st.warning(f"Error displaying image for card {idx + 1}")
                     else:
-                        # Get the image content to ensure it's valid
-                        img_response = requests.get(photo_url, timeout=10)
-                        img_response.raise_for_status()
-                        # Convert to base64 for consistent display
-                        photo_url = f"data:image/jpeg;base64,{base64.b64encode(img_response.content).decode()}"
+                        # Handle URL images
+                        try:
+                            st.image(photo_url, use_container_width=True)
+                        except Exception as e:
+                            st.image("https://placehold.co/300x400/e6e6e6/666666.png?text=Invalid+URL", use_container_width=True)
+                            st.warning(f"Error loading image URL for card {idx + 1}")
                 except Exception as e:
-                    st.warning(f"Error validating image URL for card {idx + 1}: {str(e)}")
-                    photo_url = "https://placehold.co/300x400/e6e6e6/666666.png?text=URL+Error"
+                    st.image("https://placehold.co/300x400/e6e6e6/666666.png?text=Error", use_container_width=True)
+                    st.warning(f"Error displaying image for card {idx + 1}")
             
-            # Card HTML with improved error handling
-            try:
-                card_html = f'''
-                    <div class="collection-card">
-                        <div class="card-image-container">
-                            <img src="{photo_url}" alt="Card Image" onerror="this.src='https://placehold.co/300x400/e6e6e6/666666.png?text=Image+Error'">
-                        </div>
-                        <div class="card-details">
-                            <h3>{safe_get(card, 'player_name', 'Unknown Player')}</h3>
-                            <p>{safe_get(card, 'year', '')} {safe_get(card, 'card_set', '')}</p>
-                            <p>Condition: {safe_get(card, 'condition', 'Unknown')}</p>
-                            <p>Purchase: ${purchase_price:.2f}</p>
-                        </div>
-                    </div>
-                '''
-                st.markdown(card_html, unsafe_allow_html=True)
-            except Exception as e:
-                st.error(f"Error creating card HTML for card {idx + 1}: {str(e)}")
-                continue
-            
-            # Add editable current value field and action buttons if not in shared view
-            if not is_shared:
-                col1, col2, col3 = st.columns([2, 1, 1])
-                with col1:
+            with col2:
+                # Display card details
+                st.markdown(f"""
+                <div style="padding: 1rem;">
+                    <h4 style="margin-bottom: 0.5rem;">{safe_get(card, 'player_name', 'Unknown Player')}</h4>
+                    <p style="margin: 0.25rem 0;">{safe_get(card, 'year', '')} {safe_get(card, 'card_set', '')}</p>
+                    <p style="margin: 0.25rem 0;">Condition: {safe_get(card, 'condition', 'Unknown')}</p>
+                    <p style="margin: 0.25rem 0;">Purchase: ${purchase_price:.2f}</p>
+                </div>
+                """, unsafe_allow_html=True)
+                
+                # Add editable current value field and action buttons if not in shared view
+                if not is_shared:
                     try:
                         new_value = st.number_input(
                             "Current Value ($)",
@@ -121,30 +107,29 @@ def display_collection_grid(filtered_df, is_shared=False):
                                     st.session_state.collection.loc[idx, 'roi'] = roi
                             except Exception as e:
                                 st.error(f"Error updating value: {str(e)}")
-                                st.write("Debug: Error traceback:", traceback.format_exc())
                                 # Revert changes on error
                                 st.session_state.collection.loc[idx, 'current_value'] = current_value
                                 st.session_state.collection.loc[idx, 'roi'] = roi
                     except Exception as e:
                         st.error(f"Error handling value input: {str(e)}")
-                        st.write("Debug: Error traceback:", traceback.format_exc())
-                
-                with col2:
-                    if st.button("Edit", key=f"edit_{idx}", use_container_width=True):
-                        st.session_state.editing_card = idx
-                        st.session_state.editing_data = card.to_dict()
-                        st.rerun()
-                
-                with col3:
-                    if st.button("Delete", key=f"delete_{idx}", use_container_width=True):
-                        if idx in filtered_df.index:
-                            st.session_state.collection = st.session_state.collection.drop(idx)
-                            st.session_state.collection = st.session_state.collection.reset_index(drop=True)
+                    
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        if st.button("Edit", key=f"edit_{idx}", use_container_width=True):
+                            st.session_state.editing_card = idx
+                            st.session_state.editing_data = card.to_dict()
                             st.rerun()
-            else:
-                # For shared view, just display the current value
-                st.markdown(f"<p>Current Value: ${current_value:.2f}</p>", unsafe_allow_html=True)
-                st.markdown(f"<p>ROI: {roi:.1f}%</p>", unsafe_allow_html=True)
+                    
+                    with col2:
+                        if st.button("Delete", key=f"delete_{idx}", use_container_width=True):
+                            if idx in filtered_df.index:
+                                st.session_state.collection = st.session_state.collection.drop(idx)
+                                st.session_state.collection = st.session_state.collection.reset_index(drop=True)
+                                st.rerun()
+                else:
+                    # For shared view, just display the current value and ROI
+                    st.markdown(f"<p>Current Value: ${current_value:.2f}</p>", unsafe_allow_html=True)
+                    st.markdown(f"<p>ROI: {roi:.1f}%</p>", unsafe_allow_html=True)
 
 def display_collection_table(filtered_df):
     """Display the collection in a simple table format"""
