@@ -5,6 +5,7 @@ from datetime import datetime, date
 from PIL import Image
 import base64
 import requests
+import traceback
 from modules.core.market_analysis import MarketAnalyzer
 from modules.core.collection_manager import CollectionManager
 from scrapers.ebay_interface import EbayInterface
@@ -202,10 +203,11 @@ def display_add_card_form():
         
         # Display pre-populated image if available
         if prefilled.get('photo'):
-            st.image(prefilled['photo'], caption="Card Image from Market Analysis", use_container_width=True)
+            st.image(prefilled['photo'], caption="Card Image from Market Analysis", use_column_width=True)
         else:
             photo = st.file_uploader("Upload Photo", type=["jpg", "jpeg", "png"], key="photo")
         
+        # Add submit button
         submitted = st.form_submit_button("Add Card")
         
         if submitted:
@@ -247,7 +249,7 @@ def display_add_card_form():
                 st.session_state.collection.append(new_card)
                 
                 # Save to Firebase
-                if DatabaseService.save_user_collection(st.session_state.uid, st.session_state.collection):
+                if save_collection_to_firebase(st.session_state.collection):
                     st.success("Card added successfully!")
                     # Clear pre-populated data
                     if 'prefilled_card' in st.session_state:
@@ -535,140 +537,129 @@ def edit_card_form(card_index, card_data):
                 st.error("Failed to save changes to database.")
 
 def load_collection_from_firebase():
-    """Load collection from Firebase"""
+    """Load the user's collection from Firebase"""
     try:
-        if not st.session_state.uid:
-            st.error("User not logged in")
+        if not st.session_state.user or not st.session_state.uid:
             return []
         
-        with st.spinner("Loading collection..."):
-            collection_data = DatabaseService.get_user_collection(st.session_state.uid)
-            if collection_data:
-                return collection_data
-            else:
-                return []
-    
+        # Get user document
+        user_doc = db.collection('users').document(st.session_state.uid).get()
+        if not user_doc.exists:
+            return []
+        
+        user_data = user_doc.to_dict()
+        if 'collection' not in user_data:
+            return []
+        
+        # Convert collection to list
+        collection = user_data['collection']
+        
+        # Ensure all required fields exist and process image data
+        for card in collection:
+            if 'photo' not in card:
+                card['photo'] = "https://placehold.co/300x400/e6e6e6/666666.png?text=No+Card+Image"
+            elif card['photo'] and isinstance(card['photo'], str):
+                # If it's a URL, ensure it's accessible
+                if card['photo'].startswith('http'):
+                    try:
+                        response = requests.head(card['photo'], timeout=5)
+                        if response.status_code != 200:
+                            st.warning(f"Invalid image URL for card {card.get('player_name', 'Unknown')}. Using placeholder.")
+                            card['photo'] = "https://placehold.co/300x400/e6e6e6/666666.png?text=No+Card+Image"
+                    except:
+                        st.warning(f"Failed to validate image URL for card {card.get('player_name', 'Unknown')}. Using placeholder.")
+                        card['photo'] = "https://placehold.co/300x400/e6e6e6/666666.png?text=No+Card+Image"
+                # If it's base64, ensure it's valid
+                elif card['photo'].startswith('data:image'):
+                    try:
+                        base64_part = card['photo'].split(',')[1]
+                        base64.b64decode(base64_part)
+                    except:
+                        st.warning(f"Invalid base64 image for card {card.get('player_name', 'Unknown')}. Using placeholder.")
+                        card['photo'] = "https://placehold.co/300x400/e6e6e6/666666.png?text=Invalid+Image"
+                else:
+                    # Invalid image format
+                    st.warning(f"Invalid image format for card {card.get('player_name', 'Unknown')}. Using placeholder.")
+                    card['photo'] = "https://placehold.co/300x400/e6e6e6/666666.png?text=No+Card+Image"
+            
+            # Ensure other required fields exist
+            if 'purchase_price' not in card:
+                card['purchase_price'] = 0.0
+            if 'current_value' not in card:
+                card['current_value'] = 0.0
+            if 'purchase_date' not in card:
+                card['purchase_date'] = datetime.now().isoformat()
+            if 'last_updated' not in card:
+                card['last_updated'] = datetime.now().isoformat()
+        
+        return collection
+        
     except Exception as e:
         st.error(f"Error loading collection: {str(e)}")
         return []
 
-def save_collection_to_firebase(collection_df):
-    """Save the collection to Firebase for the current user"""
+def save_collection_to_firebase(collection):
+    """Save the collection to Firebase"""
     try:
-        # Convert DataFrame to list of dictionaries if needed
-        if isinstance(collection_df, pd.DataFrame):
-            cards_data = collection_df.to_dict('records')
-        else:
-            cards_data = collection_df
-            
-        cards = []
-        
-        for idx, row in enumerate(cards_data):
-            try:
-                # Handle photo data first to ensure it's properly processed
-                photo = safe_get(row, 'photo')
-                photo_data = None
-                
-                if photo is not None and not pd.isna(photo):
-                    if isinstance(photo, str):
-                        if photo.startswith('data:image'):
-                            # If it's already a valid base64 string, keep it as is
-                            try:
-                                # Just validate the base64 string
-                                base64_part = photo.split(',')[1]
-                                base64.b64decode(base64_part)
-                                photo_data = photo
-                            except Exception as e:
-                                st.warning(f"Warning: Invalid base64 image for card {idx + 1}. Error: {str(e)}")
-                                photo_data = None
-                        elif photo.startswith('http'):
-                            # For URL images, keep the URL as is
-                            try:
-                                response = requests.head(photo, timeout=5)
-                                if response.status_code == 200:
-                                    photo_data = photo
-                                else:
-                                    st.warning(f"Warning: Invalid image URL status code {response.status_code} for card {idx + 1}")
-                            except Exception as e:
-                                st.warning(f"Warning: Failed to validate image URL for card {idx + 1}: {str(e)}")
-                    elif hasattr(photo, 'getvalue'):
-                        try:
-                            # Handle file upload object by converting to base64
-                            photo_bytes = photo.getvalue()
-                            photo_data = f"data:image/jpeg;base64,{base64.b64encode(photo_bytes).decode()}"
-                        except Exception as photo_error:
-                            st.warning(f"Warning: Could not process photo for card {idx + 1}. Error: {str(photo_error)}")
-                    elif isinstance(photo, (list, tuple)):
-                        # Handle array of photos - take the first one
-                        if photo:
-                            photo = photo[0]
-                            if isinstance(photo, str):
-                                if photo.startswith('data:image'):
-                                    try:
-                                        base64_part = photo.split(',')[1]
-                                        base64.b64decode(base64_part)
-                                        photo_data = photo
-                                    except Exception as e:
-                                        st.warning(f"Warning: Invalid base64 image from array for card {idx + 1}. Error: {str(e)}")
-                                elif photo.startswith('http'):
-                                    try:
-                                        response = requests.head(photo, timeout=5)
-                                        if response.status_code == 200:
-                                            photo_data = photo
-                                        else:
-                                            st.warning(f"Warning: Invalid image URL status code {response.status_code} for card {idx + 1}")
-                                    except Exception as e:
-                                        st.warning(f"Warning: Failed to validate image URL from array for card {idx + 1}: {str(e)}")
-                
-                # Create card object with proper type conversion
-                try:
-                    card = Card(
-                        player_name=str(safe_get(row, 'player_name', '')),
-                        year=str(safe_get(row, 'year', '')),
-                        card_set=str(safe_get(row, 'card_set', '')),
-                        card_number=str(safe_get(row, 'card_number', '')),
-                        variation=str(safe_get(row, 'variation', '')),
-                        condition=CardCondition.from_string(str(safe_get(row, 'condition', 'Raw'))),
-                        purchase_price=float(safe_get(row, 'purchase_price', 0)),
-                        purchase_date=datetime.fromisoformat(safe_get(row, 'purchase_date', datetime.now().isoformat())),
-                        current_value=float(safe_get(row, 'current_value', 0)),
-                        last_updated=datetime.fromisoformat(safe_get(row, 'last_updated', datetime.now().isoformat())),
-                        notes=str(safe_get(row, 'notes', '')),
-                        photo=photo_data,
-                        roi=float(safe_get(row, 'roi', 0)),
-                        tags=[str(tag) for tag in safe_get(row, 'tags', [])]
-                    )
-                    cards.append(card)
-                except Exception as card_error:
-                    st.error(f"Error creating card object for card {idx + 1}: {str(card_error)}")
-                    continue
-                    
-            except Exception as card_error:
-                st.error(f"Error processing card {idx + 1}: {str(card_error)}")
-                continue
-        
-        if not cards:
-            st.error("No valid cards to save")
+        if not st.session_state.user or not st.session_state.uid:
+            st.error("User not logged in")
             return False
         
-        with st.spinner("Saving collection to database..."):
-            try:
-                success = DatabaseService.save_user_collection(st.session_state.uid, cards)
-                if success:
-                    st.success(f"Successfully saved {len(cards)} cards to your collection!")
-                    return True
+        # Convert DataFrame to list if needed
+        if isinstance(collection, pd.DataFrame):
+            collection = collection.to_dict('records')
+        
+        # Process each card's photo data
+        processed_collection = []
+        for card in collection:
+            processed_card = card.copy()
+            
+            # Handle photo data
+            if 'photo' in processed_card:
+                photo = processed_card['photo']
+                if photo and isinstance(photo, str):
+                    if photo.startswith('http'):
+                        try:
+                            # Validate URL image
+                            response = requests.head(photo, timeout=5)
+                            if response.status_code != 200:
+                                st.warning(f"Invalid image URL for card {processed_card.get('player_name', 'Unknown')}. Using placeholder.")
+                                processed_card['photo'] = "https://placehold.co/300x400/e6e6e6/666666.png?text=No+Card+Image"
+                        except:
+                            st.warning(f"Failed to validate image URL for card {processed_card.get('player_name', 'Unknown')}. Using placeholder.")
+                            processed_card['photo'] = "https://placehold.co/300x400/e6e6e6/666666.png?text=No+Card+Image"
+                    elif photo.startswith('data:image'):
+                        try:
+                            # Validate base64 image
+                            base64_part = photo.split(',')[1]
+                            base64.b64decode(base64_part)
+                            # Check if the base64 string is too large (Firestore has a 1MB limit)
+                            if len(base64_part) > 900000:  # Approx 900KB
+                                st.warning(f"Image too large for card {processed_card.get('player_name', 'Unknown')}. Using placeholder.")
+                                processed_card['photo'] = "https://placehold.co/300x400/e6e6e6/666666.png?text=Image+Too+Large"
+                        except:
+                            st.warning(f"Invalid base64 image for card {processed_card.get('player_name', 'Unknown')}. Using placeholder.")
+                            processed_card['photo'] = "https://placehold.co/300x400/e6e6e6/666666.png?text=Invalid+Image"
+                    else:
+                        # Invalid image format
+                        st.warning(f"Invalid image format for card {processed_card.get('player_name', 'Unknown')}. Using placeholder.")
+                        processed_card['photo'] = "https://placehold.co/300x400/e6e6e6/666666.png?text=No+Card+Image"
                 else:
-                    st.error("Failed to save collection to database. Please try again.")
-                    return False
-            except Exception as save_error:
-                st.error(f"Error saving collection: {str(save_error)}")
-                import traceback
-                st.write("Debug: Error traceback:", traceback.format_exc())
-                return False
-                
+                    # No valid photo data
+                    processed_card['photo'] = "https://placehold.co/300x400/e6e6e6/666666.png?text=No+Card+Image"
+            
+            processed_collection.append(processed_card)
+        
+        # Save to Firebase
+        db.collection('users').document(st.session_state.uid).update({
+            'collection': processed_collection,
+            'last_updated': datetime.now().isoformat()
+        })
+        
+        return True
+        
     except Exception as e:
-        st.error(f"Error in save_collection_to_firebase: {str(e)}")
-        import traceback
+        st.error(f"Error saving collection: {str(e)}")
         st.write("Debug: Error traceback:", traceback.format_exc())
         return False
 

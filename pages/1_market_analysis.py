@@ -345,7 +345,7 @@ def display_variations_grid(variation_groups):
                 
                 if group['representative_image']:
                     st.image(group['representative_image'], 
-                            use_container_width=True,
+                            use_column_width=True,
                             output_format="JPEG",
                             caption=group['variation_name'])
                 
@@ -1194,7 +1194,7 @@ def display_image(image_url):
     if image_url:
         st.image(
             image_url,
-            use_container_width=True,
+            use_column_width=True,
             output_format="JPEG",
             caption="Card Image"
         )

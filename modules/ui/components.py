@@ -11,22 +11,22 @@ from modules.core.grading_analyzer import GradingAnalyzer
 
 class CardDisplay:
     @staticmethod
-    def display_image(image_url: Optional[str] = None, show_placeholder: bool = False, width: int = 300):
+    def display_image(image_url: Optional[str] = None, show_placeholder: bool = False):
         """Display card image with fallback."""
         if not image_url or not image_url.strip():
-            st.image("https://placehold.co/300x400/e6e6e6/666666.png?text=No+Card+Image", width=width)
+            st.image("https://placehold.co/300x400/e6e6e6/666666.png?text=No+Card+Image", use_column_width=True)
             return
 
         try:
             # Handle base64 images
             if isinstance(image_url, str) and image_url.startswith('data:image'):
                 try:
-                    st.image(image_url, width=width)
+                    st.image(image_url, use_column_width=True)
                     return
                 except Exception as e:
                     if show_placeholder:
                         st.warning(f"Failed to load base64 image: {str(e)}")
-                    st.image("https://placehold.co/300x400/e6e6e6/666666.png?text=Invalid+Base64", width=width)
+                    st.image("https://placehold.co/300x400/e6e6e6/666666.png?text=Invalid+Base64", use_column_width=True)
                     return
 
             # Clean and format the URL
@@ -64,15 +64,15 @@ class CardDisplay:
 
             # Convert to image bytes and display
             image_bytes = io.BytesIO(response.content)
-            st.image(image_bytes, width=width)
+            st.image(image_bytes, use_column_width=True)
 
         except Exception as e:
             # If the first attempt fails, try direct loading
             try:
-                st.image(image_url, width=width)
+                st.image(image_url, use_column_width=True)
             except:
                 # If both attempts fail, show placeholder
-                st.image("https://placehold.co/300x400/e6e6e6/666666.png?text=Image+Load+Failed", width=width)
+                st.image("https://placehold.co/300x400/e6e6e6/666666.png?text=Image+Load+Failed", use_column_width=True)
                 if show_placeholder:
                     st.warning(f"Failed to load image: {str(e)}")
 

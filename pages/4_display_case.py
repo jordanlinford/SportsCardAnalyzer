@@ -14,6 +14,7 @@ from pathlib import Path
 from modules.display_case.manager import DisplayCaseManager
 import ast
 from modules.database.service import DatabaseService
+import requests
 
 st.set_page_config(
     page_title="Display Case - Sports Card Analyzer Pro",
@@ -111,13 +112,13 @@ def display_case_grid(display_case):
                                         # Create an image from the bytes
                                         image = Image.open(io.BytesIO(image_data))
                                         # Display the image
-                                        st.image(image, use_container_width=True)
+                                        st.image(image, use_column_width=True)
                                     except Exception as e:
                                         st.error(f"Failed to load base64 image: {str(e)}")
                                 # Check if the photo is a URL
                                 elif isinstance(photo, str) and (photo.startswith('http://') or photo.startswith('https://')):
                                     # Display the image from URL
-                                    st.image(photo, use_container_width=True)
+                                    st.image(photo, use_column_width=True)
                                 else:
                                     st.warning("Invalid image format")
                         except Exception as e:
@@ -290,7 +291,7 @@ def create_display_case_form():
                             try:
                                 # Display card image if available
                                 if card.get('photo'):
-                                    st.image(card['photo'], use_container_width=True)
+                                    st.image(card['photo'], use_column_width=True)
                                 
                                 # Display card details
                                 st.markdown(f"""
@@ -350,6 +351,69 @@ def has_cards(collection):
     if isinstance(collection, list):
         return len(collection) > 0
     return False
+
+def display_card(card):
+    """Display a single card in the display case"""
+    try:
+        # Create columns for the card display
+        col1, col2 = st.columns([1, 2])
+        
+        with col1:
+            # Display card image
+            if 'photo' in card and card['photo']:
+                if card['photo'].startswith('data:image'):
+                    # Handle base64 images
+                    try:
+                        st.image(card['photo'], use_column_width=True)
+                    except Exception as e:
+                        st.error(f"Error displaying image: {str(e)}")
+                        st.image("https://via.placeholder.com/300x400?text=Image+Error", use_column_width=True)
+                elif card['photo'].startswith('http'):
+                    # Handle URL images
+                    try:
+                        response = requests.head(card['photo'], timeout=5)
+                        if response.status_code == 200:
+                            st.image(card['photo'], use_column_width=True)
+                        else:
+                            st.image("https://via.placeholder.com/300x400?text=Image+Not+Available", use_column_width=True)
+                    except:
+                        st.image("https://via.placeholder.com/300x400?text=Image+Not+Available", use_column_width=True)
+                else:
+                    st.image("https://via.placeholder.com/300x400?text=No+Image", use_column_width=True)
+            else:
+                st.image("https://via.placeholder.com/300x400?text=No+Image", use_column_width=True)
+        
+        with col2:
+            # Display card details
+            st.markdown(f"""
+            <div style="padding: 1rem;">
+                <h2>{card.get('player_name', 'Unknown Player')}</h2>
+                <p><strong>Year:</strong> {card.get('year', '')}</p>
+                <p><strong>Set:</strong> {card.get('card_set', '')}</p>
+                <p><strong>Number:</strong> {card.get('card_number', '')}</p>
+                <p><strong>Condition:</strong> {card.get('condition', '')}</p>
+                <p><strong>Purchase Price:</strong> ${card.get('purchase_price', 0):.2f}</p>
+                <p><strong>Current Value:</strong> ${card.get('current_value', 0):.2f}</p>
+                <p><strong>ROI:</strong> {card.get('roi', 0):.1f}%</p>
+                <p><strong>Notes:</strong> {card.get('notes', '')}</p>
+            </div>
+            """, unsafe_allow_html=True)
+            
+            # Add action buttons
+            col1, col2 = st.columns(2)
+            with col1:
+                if st.button("Edit Card", use_column_width=True):
+                    st.session_state.editing_card = card
+                    st.session_state.current_tab = "View Collection"
+                    st.rerun()
+            with col2:
+                if st.button("Remove from Display", use_column_width=True):
+                    remove_card_from_display(card)
+                    st.rerun()
+    
+    except Exception as e:
+        st.error(f"Failed to display card: {str(e)}")
+        st.write("Debug: Error traceback:", traceback.format_exc())
 
 def main():
     st.title("Display Case")
