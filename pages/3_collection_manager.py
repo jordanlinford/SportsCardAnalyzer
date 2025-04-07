@@ -13,23 +13,22 @@ from modules.firebase.config import db
 from modules.firebase.user_management import UserManager
 from modules.database import Card, UserPreferences, DatabaseService
 from modules.database.models import CardCondition
-from modules.ui.collection_display import display_collection_grid, display_collection_table
-from modules.ui.styles import get_collection_styles
+from modules.ui.collection_display import CardDisplay
+from modules.ui.theme.theme_manager import ThemeManager
 from io import BytesIO
 import json
 from modules.core.card_value_analyzer import CardValueAnalyzer # type: ignore
-from modules.ui.components import CardDisplay  # Updated import path
 
 # Configure the page
 st.set_page_config(
     page_title="Collection Manager - Sports Card Analyzer Pro",
-    page_icon="",
+    page_icon="🏈",
     layout="wide",
     initial_sidebar_state="collapsed"  # Collapse sidebar by default on mobile
 )
 
-# Apply global styles once at the start
-st.markdown(get_collection_styles(), unsafe_allow_html=True)
+# Apply theme styles
+ThemeManager.apply_theme_styles()
 
 def init_session_state():
     """Initialize session state variables"""
@@ -242,11 +241,16 @@ def display_add_card_form():
                     photo_base64 = base64.b64encode(photo_bytes).decode('utf-8')
                     new_card['photo'] = f"data:image/{photo.type.split('/')[-1]};base64,{photo_base64}"
                 
-                # Add card to collection
+                # Initialize collection if not exists
                 if 'collection' not in st.session_state:
                     st.session_state.collection = []
                 
-                st.session_state.collection.append(new_card)
+                # Convert DataFrame to list if needed
+                if isinstance(st.session_state.collection, pd.DataFrame):
+                    st.session_state.collection = st.session_state.collection.to_dict('records')
+                
+                # Add new card
+                st.session_state.collection = st.session_state.collection + [new_card]
                 
                 # Save to Firebase
                 if save_collection_to_firebase(st.session_state.collection):
@@ -669,44 +673,13 @@ def display_collection_grid(filtered_collection, is_shared=False):
         st.info("No cards to display")
         return
     
-    # Create a grid of cards
-    cols = st.columns(3)
-    for idx, card in enumerate(filtered_collection):
-        col = cols[idx % 3]
-        with col:
-            with st.container():
-                # Safely get photo from card
-                photo = None
-                if isinstance(card, dict):
-                    photo = card.get('photo', '')
-                elif hasattr(card, 'photo'):
-                    photo = card.photo
-                
-                # Use the improved CardDisplay method
-                CardDisplay.display_image(photo, show_placeholder=True)
-                
-                # Safely get card details
-                player_name = card.get('player_name', '') if isinstance(card, dict) else getattr(card, 'player_name', '')
-                year = card.get('year', '') if isinstance(card, dict) else getattr(card, 'year', '')
-                card_set = card.get('card_set', '') if isinstance(card, dict) else getattr(card, 'card_set', '')
-                card_number = card.get('card_number', '') if isinstance(card, dict) else getattr(card, 'card_number', '')
-                
-                # Display card details
-                st.markdown(f"""
-                <div style="padding: 1rem;">
-                    <h4>{player_name}</h4>
-                    <p>{year} {card_set}</p>
-                    <p>#{card_number}</p>
-                </div>
-                """, unsafe_allow_html=True)
-                
-                # Add edit button if not shared collection
-                if not is_shared:
-                    if st.button("Edit", key=f"edit_{idx}"):
-                        st.session_state.editing_card = idx
-                        st.session_state.editing_data = card
-                        st.session_state.current_tab = "View Collection"  # Set the current tab
-                        st.rerun()  # Force a rerun to show the edit form
+    # Use CardDisplay.display_grid with a callback for editing
+    CardDisplay.display_grid(filtered_collection, on_click=lambda idx: None if is_shared else (
+        setattr(st.session_state, 'editing_card', idx),
+        setattr(st.session_state, 'editing_data', filtered_collection[idx]),
+        setattr(st.session_state, 'current_tab', "View Collection"),
+        st.rerun()
+    ))
 
 def display_collection_table(filtered_collection):
     """Display collection in a table format"""
@@ -752,6 +725,22 @@ def safe_get(card, key, default=None):
     elif isinstance(card, dict):
         return card.get(key, default)
     return default
+
+def display_collection():
+    """Display the collection view."""
+    # Get collection from session state
+    collection = st.session_state.collection if hasattr(st.session_state, 'collection') else []
+    
+    # Display options
+    view_type = st.radio("View Type", ["Grid", "Table"], horizontal=True)
+    
+    if view_type == "Grid":
+        CardDisplay.display_grid(collection, on_click=lambda i: st.session_state.update({
+            'editing_card': i,
+            'editing_data': collection[i]
+        }))
+    else:
+        CardDisplay.display_table(collection)
 
 def main():
     """Main function for the collection manager page"""

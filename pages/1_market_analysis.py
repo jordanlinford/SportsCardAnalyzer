@@ -225,7 +225,9 @@ def add_to_collection(card_data, market_data):
                 variation = st.text_input("Variation", value=variation)
                 condition = st.selectbox(
                     "Condition",
-                    ["Raw", "PSA 10", "PSA 9", "SGC 10", "SGC 9.5", "SGC 9"],
+                    ["Raw", "PSA 10", "PSA 9", "PSA 8", "PSA 7", "PSA 6", 
+                     "PSA 5", "PSA 4", "PSA 3", "PSA 2", "PSA 1",
+                     "SGC 10", "SGC 9.5", "SGC 9"],
                     index=0
                 )
             
@@ -1054,7 +1056,8 @@ def display_search_form():
         card_number = st.text_input("Card Number")
         variation = st.text_input("Variation")
         condition = st.selectbox("Condition", [
-            "Raw", "PSA 10", "PSA 9", 
+            "Raw", "PSA 10", "PSA 9", "PSA 8", "PSA 7", "PSA 6", 
+            "PSA 5", "PSA 4", "PSA 3", "PSA 2", "PSA 1",
             "SGC 10", "SGC 9.5", "SGC 9"
         ])
         

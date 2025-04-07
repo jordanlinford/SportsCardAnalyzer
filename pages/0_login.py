@@ -1,6 +1,9 @@
 import streamlit as st
 from modules.firebase.firebase_init import initialize_all, get_firestore_client, get_pyrebase_auth
 from modules.firebase.user_management import UserManager
+from modules.ui.theme.theme_manager import ThemeManager
+from modules.ui.branding import BrandingComponent
+from modules.ui.theme.theme_config import FAVICON_PATH
 import traceback
 import json
 import webbrowser
@@ -10,9 +13,13 @@ import threading
 # Configure the page
 st.set_page_config(
     page_title="Login - Sports Card Analyzer Pro",
-    page_icon="🔑",
+    page_icon=FAVICON_PATH,
     layout="centered"
 )
+
+# Apply theme and branding styles
+ThemeManager.apply_theme_styles()
+BrandingComponent.add_branding_styles()
 
 def initialize_firebase():
     """
@@ -93,7 +100,10 @@ def handle_auth_error(e):
         return f"An error occurred: {str(e)}"
 
 def main():
-    st.title("Sports Card Analyzer Pro")
+    # Display logo centered at the top
+    st.markdown('<div class="logo-container vertical" style="display: flex; flex-direction: column; align-items: center; gap: 12px; text-align: center; padding: 1rem;">', unsafe_allow_html=True)
+    BrandingComponent.display_vertical_logo()
+    st.markdown('</div>', unsafe_allow_html=True)
     
     # Initialize session state
     if 'user' not in st.session_state:
