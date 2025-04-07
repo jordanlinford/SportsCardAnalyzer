@@ -193,4 +193,41 @@ h1, h2, h3, h4, h5, h6 {
         background-color: rgba(255,255,255,0.05);
     }
 }
-""" 
+"""
+
+class ThemeConfig:
+    """Configuration for application themes."""
+    
+    # Light theme colors
+    LIGHT_THEME = {
+        "primaryColor": "#FF4B4B",
+        "backgroundColor": "#FFFFFF",
+        "secondaryBackgroundColor": "#F0F2F6",
+        "textColor": "#262730",
+        "font": "sans serif"
+    }
+    
+    # Dark theme colors
+    DARK_THEME = {
+        "primaryColor": "#FF4B4B",
+        "backgroundColor": "#0E1117",
+        "secondaryBackgroundColor": "#262730",
+        "textColor": "#FAFAFA",
+        "font": "sans serif"
+    }
+    
+    @staticmethod
+    def get_theme(is_dark_mode=False):
+        """Get theme configuration based on mode."""
+        return ThemeConfig.DARK_THEME if is_dark_mode else ThemeConfig.LIGHT_THEME
+    
+    @staticmethod
+    def get_css_variables(is_dark_mode=False):
+        """Get CSS variables for the theme."""
+        theme = ThemeConfig.get_theme(is_dark_mode)
+        return {
+            "--primary-color": theme["primaryColor"],
+            "--background-color": theme["backgroundColor"],
+            "--secondary-background-color": theme["secondaryBackgroundColor"],
+            "--text-color": theme["textColor"]
+        } 

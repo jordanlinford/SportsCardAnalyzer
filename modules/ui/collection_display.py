@@ -189,7 +189,7 @@ class CardDisplay:
             st.warning("No cards to display.")
             return
 
-        # Add grid styles
+        # Add grid styles with mobile responsiveness
         st.markdown("""
         <style>
         .card-grid-item {
@@ -230,6 +230,21 @@ class CardDisplay:
             color: var(--primary-color, #000000);
         }
         
+        /* Mobile responsiveness */
+        @media (max-width: 768px) {
+            .card-grid-item {
+                padding: 0.75rem;
+            }
+            
+            .card-grid-content h3 {
+                font-size: 1rem;
+            }
+            
+            .card-grid-content p {
+                font-size: 0.8rem;
+            }
+        }
+        
         /* Dark mode */
         @media (prefers-color-scheme: dark) {
             .card-grid-item {
@@ -240,8 +255,10 @@ class CardDisplay:
         </style>
         """, unsafe_allow_html=True)
 
-        # Create columns for the grid
-        cols = st.columns(3)
+        # Create responsive columns based on screen size
+        screen_width = st.session_state.get('screen_width', 1200)  # Default to desktop
+        num_columns = 3 if screen_width > 768 else (2 if screen_width > 480 else 1)
+        cols = st.columns(num_columns)
         
         # Convert DataFrame to list of dictionaries if needed
         if hasattr(cards, 'to_dict'):
@@ -249,7 +266,7 @@ class CardDisplay:
         
         # Display each card in the grid
         for i, card in enumerate(cards):
-            col = cols[i % 3]
+            col = cols[i % num_columns]
             with col:
                 st.markdown('<div class="card-grid-item">', unsafe_allow_html=True)
                 
@@ -293,7 +310,7 @@ class CardDisplay:
                 
                 # Add edit button if on_click is provided
                 if on_click is not None:
-                    if st.button("Edit", key=f"edit_{i}"):
+                    if st.button("Edit", key=f"edit_{i}", use_container_width=True):
                         on_click(i)
                 
                 st.markdown('</div>', unsafe_allow_html=True)  # Close card-grid-content
