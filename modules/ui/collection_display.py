@@ -6,6 +6,7 @@ from datetime import datetime
 import traceback
 import base64
 from typing import Optional
+import requests
 
 def display_collection_grid(filtered_df, is_shared=False):
     """Display the collection in a grid layout with cards"""
@@ -20,8 +21,8 @@ def display_collection_grid(filtered_df, is_shared=False):
     for idx, card in filtered_df.iterrows():
         # Calculate ROI
         try:
-            purchase_price = float(card.get('purchase_price', 0))
-            current_value = float(card.get('current_value', 0))
+            purchase_price = float(safe_get(card, 'purchase_price', 0))
+            current_value = float(safe_get(card, 'current_value', 0))
             roi = ((current_value - purchase_price) / purchase_price * 100) if purchase_price > 0 else 0
         except (ValueError, TypeError):
             purchase_price = 0.0
@@ -31,30 +32,49 @@ def display_collection_grid(filtered_df, is_shared=False):
         # Create unique container for each card
         with st.container():
             # Handle image display
-            photo_url = card.get('photo', '')
-            if not photo_url or pd.isna(photo_url):
-                photo_url = "https://placehold.co/300x400/e6e6e6/666666.png?text=No+Card+Image"
+            photo_url = safe_get(card, 'photo', '')
             
-            # Card HTML
-            card_html = f'''
-                <div class="collection-card">
-                    <div class="card-image-container">
-                        <img src="{photo_url}" alt="Card Image">
-                    </div>
-                    <div class="card-details">
-                        <h3>{card.get('player_name', 'Unknown Player')}</h3>
-                        <p>{card.get('year', '')} {card.get('card_set', '')}</p>
-                        <p>Condition: {card.get('condition', 'Unknown')}</p>
-                        <p>Purchase: ${purchase_price:.2f}</p>
-                    </div>
+            # Create a column for the image and details
+            col1, col2 = st.columns([1, 1])
+            
+            with col1:
+                try:
+                    if not photo_url or pd.isna(photo_url):
+                        st.image("https://placehold.co/300x400/e6e6e6/666666.png?text=No+Card+Image", use_container_width=True)
+                    elif photo_url.startswith('data:image'):
+                        # Handle base64 images
+                        try:
+                            # Validate base64 string
+                            base64_part = photo_url.split(',')[1]
+                            base64.b64decode(base64_part)
+                            st.image(photo_url, use_container_width=True)
+                        except Exception as e:
+                            st.image("https://placehold.co/300x400/e6e6e6/666666.png?text=Invalid+Image", use_container_width=True)
+                            st.warning(f"Error displaying image for card {idx + 1}")
+                    else:
+                        # Handle URL images
+                        try:
+                            st.image(photo_url, use_container_width=True)
+                        except Exception as e:
+                            st.image("https://placehold.co/300x400/e6e6e6/666666.png?text=Invalid+URL", use_container_width=True)
+                            st.warning(f"Error loading image URL for card {idx + 1}")
+                except Exception as e:
+                    st.image("https://placehold.co/300x400/e6e6e6/666666.png?text=Error", use_container_width=True)
+                    st.warning(f"Error displaying image for card {idx + 1}")
+            
+            with col2:
+                # Display card details
+                st.markdown(f"""
+                <div style="padding: 1rem;">
+                    <h4 style="margin-bottom: 0.5rem;">{safe_get(card, 'player_name', 'Unknown Player')}</h4>
+                    <p style="margin: 0.25rem 0;">{safe_get(card, 'year', '')} {safe_get(card, 'card_set', '')}</p>
+                    <p style="margin: 0.25rem 0;">Condition: {safe_get(card, 'condition', 'Unknown')}</p>
+                    <p style="margin: 0.25rem 0;">Purchase: ${purchase_price:.2f}</p>
                 </div>
-            '''
-            st.markdown(card_html, unsafe_allow_html=True)
-            
-            # Add editable current value field and action buttons if not in shared view
-            if not is_shared:
-                col1, col2, col3 = st.columns([2, 1, 1])
-                with col1:
+                """, unsafe_allow_html=True)
+                
+                # Add editable current value field and action buttons if not in shared view
+                if not is_shared:
                     try:
                         new_value = st.number_input(
                             "Current Value ($)",
@@ -76,13 +96,6 @@ def display_collection_grid(filtered_df, is_shared=False):
                                 # Update last_updated timestamp
                                 st.session_state.collection.loc[idx, 'last_updated'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
                                 
-                                # Debug: Print update details
-                                st.write("Debug: Updating card with values:", {
-                                    'current_value': new_value,
-                                    'roi': new_roi,
-                                    'last_updated': st.session_state.collection.loc[idx, 'last_updated']
-                                })
-                                
                                 # Save to Firebase
                                 if DatabaseService.save_user_collection(st.session_state.uid, st.session_state.collection):
                                     st.success("Value updated successfully!")
@@ -94,30 +107,29 @@ def display_collection_grid(filtered_df, is_shared=False):
                                     st.session_state.collection.loc[idx, 'roi'] = roi
                             except Exception as e:
                                 st.error(f"Error updating value: {str(e)}")
-                                st.write("Debug: Error traceback:", traceback.format_exc())
                                 # Revert changes on error
                                 st.session_state.collection.loc[idx, 'current_value'] = current_value
                                 st.session_state.collection.loc[idx, 'roi'] = roi
                     except Exception as e:
                         st.error(f"Error handling value input: {str(e)}")
-                        st.write("Debug: Error traceback:", traceback.format_exc())
-                
-                with col2:
-                    if st.button("Edit", key=f"edit_{idx}", use_container_width=True):
-                        st.session_state.editing_card = idx
-                        st.session_state.editing_data = card.to_dict()
-                        st.rerun()
-                
-                with col3:
-                    if st.button("Delete", key=f"delete_{idx}", use_container_width=True):
-                        if idx in filtered_df.index:
-                            st.session_state.collection = st.session_state.collection.drop(idx)
-                            st.session_state.collection = st.session_state.collection.reset_index(drop=True)
+                    
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        if st.button("Edit", key=f"edit_{idx}", use_container_width=True):
+                            st.session_state.editing_card = idx
+                            st.session_state.editing_data = card.to_dict()
                             st.rerun()
-            else:
-                # For shared view, just display the current value
-                st.markdown(f"<p>Current Value: ${current_value:.2f}</p>", unsafe_allow_html=True)
-                st.markdown(f"<p>ROI: {roi:.1f}%</p>", unsafe_allow_html=True)
+                    
+                    with col2:
+                        if st.button("Delete", key=f"delete_{idx}", use_container_width=True):
+                            if idx in filtered_df.index:
+                                st.session_state.collection = st.session_state.collection.drop(idx)
+                                st.session_state.collection = st.session_state.collection.reset_index(drop=True)
+                                st.rerun()
+                else:
+                    # For shared view, just display the current value and ROI
+                    st.markdown(f"<p>Current Value: ${current_value:.2f}</p>", unsafe_allow_html=True)
+                    st.markdown(f"<p>ROI: {roi:.1f}%</p>", unsafe_allow_html=True)
 
 def display_collection_table(filtered_df):
     """Display the collection in a simple table format"""

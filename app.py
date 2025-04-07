@@ -1,10 +1,16 @@
 import streamlit as st
 import sys
 from pathlib import Path
+import logging
+
+# Configure logging
+logging.basicConfig(level=logging.DEBUG)
+logger = logging.getLogger(__name__)
 
 # Add the project root directory to Python path
 project_root = Path(__file__).parent.absolute()
 sys.path.append(str(project_root))
+logger.debug(f"Added project root to path: {project_root}")
 
 # Configure the page
 st.set_page_config(
@@ -13,6 +19,7 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="expanded"
 )
+logger.debug("Page configuration set")
 
 # Custom CSS for mobile responsiveness
 st.markdown("""
@@ -121,28 +128,54 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 def main():
-    st.title("Welcome to Sports Card Analyzer Pro")
-    st.write("Please select a page from the sidebar to get started.")
+    logger.debug("Starting main function")
     
     # Initialize session state for user if not exists
     if 'user' not in st.session_state:
+        logger.debug("Initializing user session state")
         st.session_state.user = None
     if 'uid' not in st.session_state:
+        logger.debug("Initializing uid session state")
         st.session_state.uid = None
     
     # If user is not logged in, redirect to login page
     if not st.session_state.user:
-        st.switch_page("pages/login.py")
+        logger.debug("User not logged in, redirecting to login page")
+        st.switch_page("pages/0_login.py")
     
     # Add logout button to sidebar
     with st.sidebar:
+        logger.debug("Setting up sidebar")
+        st.title("Navigation")
         if st.button("Logout", type="primary"):
+            logger.debug("Logout button clicked")
             # Clear session state
             st.session_state.user = None
             st.session_state.uid = None
             st.session_state.clear()
             # Redirect to login page
-            st.switch_page("pages/login.py")
+            st.switch_page("pages/0_login.py")
+        
+        # Add page navigation buttons
+        st.markdown("### Pages")
+        logger.debug("Setting up page navigation buttons")
+        if st.button("Market Analysis"):
+            logger.debug("Market Analysis button clicked")
+            st.switch_page("pages/1_market_analysis.py")
+        if st.button("Trade Analyzer"):
+            logger.debug("Trade Analyzer button clicked")
+            st.switch_page("pages/2_trade_analyzer.py")
+        if st.button("Collection Manager"):
+            logger.debug("Collection Manager button clicked")
+            st.switch_page("pages/3_collection_manager.py")
+        if st.button("Display Cases"):
+            logger.debug("Display Cases button clicked")
+            st.switch_page("pages/4_display_case.py")
+    
+    # Main content
+    logger.debug("Setting up main content")
+    st.title("Welcome to Sports Card Analyzer Pro")
+    st.write("Please select a page from the sidebar to get started.")
     
     # Display app features
     st.markdown("""
@@ -153,21 +186,23 @@ def main():
        - View price trends
        - Get market insights
     
-    2. **Collection Management**
-       - Track your cards
-       - Monitor value changes
-       - Organize by display cases
-    
-    3. **Price Predictions**
-       - Get price forecasts
-       - Track market trends
+    2. **Trade Analyzer**
+       - Analyze potential trades
+       - Compare card values
        - Make informed decisions
     
-    4. **Profit Calculator**
-       - Calculate potential returns
-       - Track ROI
-       - Plan your investments
+    3. **Collection Manager**
+       - Track your cards
+       - Monitor value changes
+       - Organize your collection
+    
+    4. **Display Cases**
+       - Create custom displays
+       - Group cards by tags
+       - Showcase your collection
     """)
+    logger.debug("Main function completed")
 
 if __name__ == "__main__":
+    logger.debug("Starting application")
     main() 

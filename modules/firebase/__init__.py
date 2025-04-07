@@ -1,5 +1,8 @@
-from modules.database.service import DatabaseService
-from .user_management import UserManager
-from .config import db, pb_auth
+# Remove the circular import
+# from modules.database.service import DatabaseService
 
-__all__ = ['DatabaseService', 'UserManager', 'db', 'pb_auth'] 
+# Keep other necessary imports
+from .config import db
+from .user_management import UserManager
+
+__all__ = ['UserManager', 'db'] 

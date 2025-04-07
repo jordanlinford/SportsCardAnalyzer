@@ -10,12 +10,12 @@ class CardDisplay:
         """Display card image with fallback."""
         if image_url:
             try:
-                st.image(image_url, use_column_width=True)
+                st.image(image_url, use_container_width=True)
             except Exception as e:
                 st.warning(f"Could not display card image: {str(e)}")
-                st.image("https://via.placeholder.com/300x400?text=No+Image", use_column_width=True)
+                st.image("https://via.placeholder.com/300x400?text=No+Image", use_container_width=True)
         else:
-            st.image("https://via.placeholder.com/300x400?text=No+Image", use_column_width=True)
+            st.image("https://via.placeholder.com/300x400?text=No+Image", use_container_width=True)
 
     @staticmethod
     def display_card_details(card):

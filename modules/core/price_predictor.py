@@ -11,6 +11,8 @@ import xgboost as xgb
 from textblob import TextBlob
 import re
 
+from scrapers.ebay_interface import EbayInterface
+
 class PricePredictor:
     def __init__(self):
         # Initialize multiple models for ensemble prediction

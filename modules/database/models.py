@@ -1,5 +1,5 @@
 from typing import Dict, List, Optional
-from datetime import datetime
+from datetime import datetime, date
 from dataclasses import dataclass
 from enum import Enum
 
@@ -86,22 +86,23 @@ class Card:
             tags=tags
         )
 
-    def to_dict(self) -> Dict:
+    def to_dict(self):
+        """Convert card to dictionary format"""
         return {
             'player_name': self.player_name,
             'year': self.year,
             'card_set': self.card_set,
             'card_number': self.card_number,
             'variation': self.variation,
-            'condition': self.condition.value,
+            'condition': self.condition if isinstance(self.condition, str) else self.condition.value,
             'purchase_price': self.purchase_price,
-            'purchase_date': self.purchase_date.isoformat(),
+            'purchase_date': self.purchase_date.strftime('%Y-%m-%d') if isinstance(self.purchase_date, (datetime, date)) else self.purchase_date,
             'current_value': self.current_value,
-            'last_updated': self.last_updated.isoformat(),
+            'last_updated': self.last_updated.strftime('%Y-%m-%d') if isinstance(self.last_updated, (datetime, date)) else self.last_updated,
             'notes': self.notes,
-            'photo': self.photo,
             'roi': self.roi,
-            'tags': self.tags
+            'tags': self.tags,
+            'photo': self.photo
         }
 
 @dataclass

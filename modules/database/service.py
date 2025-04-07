@@ -8,6 +8,19 @@ import base64
 import ast
 
 class DatabaseService:
+    _instance = None
+    
+    @classmethod
+    def get_instance(cls):
+        """Get the singleton instance of DatabaseService"""
+        if cls._instance is None:
+            cls._instance = DatabaseService()
+        return cls._instance
+        
+    def __init__(self):
+        """Initialize the database service"""
+        self.db = db
+
     @staticmethod
     def get_user_data(uid: str) -> Optional[Dict]:
         """Get user data from Firestore."""
@@ -72,23 +85,45 @@ class DatabaseService:
                 try:
                     # Handle both Card objects and dictionary records
                     if isinstance(card, dict):
-                        # Validate photo data
+                        # Handle photo data
                         photo = card.get('photo', '')
                         if photo:
                             try:
-                                # Validate base64 string format
-                                if not photo.startswith('data:image'):
+                                # Accept both base64 and URL formats
+                                if not (photo.startswith('data:image') or photo.startswith('http')):
                                     print(f"Warning: Invalid photo data format for card {card.get('player_name', 'Unknown')}")
                                     photo = ''
-                                else:
+                                elif photo.startswith('data:image'):
                                     # Validate base64 content
                                     try:
                                         base64_part = photo.split(',')[1]
-                                        # Check size before decoding
-                                        if len(base64_part) > 500 * 1024:  # 500KB limit
+                                        # Check size before decoding - increased to 2MB
+                                        if len(base64_part) > 2 * 1024 * 1024:  # 2MB limit
                                             print(f"Warning: Photo data too large for card {card.get('player_name', 'Unknown')}")
-                                            photo = ''
+                                            # Try to compress the image
+                                            try:
+                                                import io
+                                                from PIL import Image
+                                                # Decode base64 to image
+                                                img_data = base64.b64decode(base64_part)
+                                                img = Image.open(io.BytesIO(img_data))
+                                                # Convert to RGB if necessary
+                                                if img.mode != 'RGB':
+                                                    img = img.convert('RGB')
+                                                # Calculate new size while maintaining aspect ratio
+                                                ratio = min(800/img.size[0], 1000/img.size[1])
+                                                new_size = (int(img.size[0]*ratio), int(img.size[1]*ratio))
+                                                img = img.resize(new_size, Image.LANCZOS)
+                                                # Save with compression
+                                                buffer = io.BytesIO()
+                                                img.save(buffer, format='JPEG', quality=85, optimize=True)
+                                                # Convert back to base64
+                                                photo = f"data:image/jpeg;base64,{base64.b64encode(buffer.getvalue()).decode()}"
+                                            except Exception as compress_error:
+                                                print(f"Warning: Failed to compress image for card {card.get('player_name', 'Unknown')}. Error: {str(compress_error)}")
+                                                photo = ''
                                         else:
+                                            # Validate the base64 content
                                             base64.b64decode(base64_part)
                                     except Exception as e:
                                         print(f"Warning: Invalid base64 image data for card {card.get('player_name', 'Unknown')}. Error: {str(e)}")
@@ -115,23 +150,45 @@ class DatabaseService:
                             'tags': [str(tag) for tag in card.get('tags', [])]
                         }
                     else:
-                        # Validate photo data for Card object
+                        # Handle photo data for Card object
                         photo = card.photo
                         if photo:
                             try:
-                                # Validate base64 string format
-                                if not photo.startswith('data:image'):
+                                # Accept both base64 and URL formats
+                                if not (photo.startswith('data:image') or photo.startswith('http')):
                                     print(f"Warning: Invalid photo data format for card {card.player_name}")
                                     photo = ''
-                                else:
+                                elif photo.startswith('data:image'):
                                     # Validate base64 content
                                     try:
                                         base64_part = photo.split(',')[1]
-                                        # Check size before decoding
-                                        if len(base64_part) > 500 * 1024:  # 500KB limit
+                                        # Check size before decoding - increased to 2MB
+                                        if len(base64_part) > 2 * 1024 * 1024:  # 2MB limit
                                             print(f"Warning: Photo data too large for card {card.player_name}")
-                                            photo = ''
+                                            # Try to compress the image
+                                            try:
+                                                import io
+                                                from PIL import Image
+                                                # Decode base64 to image
+                                                img_data = base64.b64decode(base64_part)
+                                                img = Image.open(io.BytesIO(img_data))
+                                                # Convert to RGB if necessary
+                                                if img.mode != 'RGB':
+                                                    img = img.convert('RGB')
+                                                # Calculate new size while maintaining aspect ratio
+                                                ratio = min(800/img.size[0], 1000/img.size[1])
+                                                new_size = (int(img.size[0]*ratio), int(img.size[1]*ratio))
+                                                img = img.resize(new_size, Image.LANCZOS)
+                                                # Save with compression
+                                                buffer = io.BytesIO()
+                                                img.save(buffer, format='JPEG', quality=85, optimize=True)
+                                                # Convert back to base64
+                                                photo = f"data:image/jpeg;base64,{base64.b64encode(buffer.getvalue()).decode()}"
+                                            except Exception as compress_error:
+                                                print(f"Warning: Failed to compress image for card {card.player_name}. Error: {str(compress_error)}")
+                                                photo = ''
                                         else:
+                                            # Validate the base64 content
                                             base64.b64decode(base64_part)
                                     except Exception as e:
                                         print(f"Warning: Invalid base64 image data for card {card.player_name}. Error: {str(e)}")
@@ -185,6 +242,7 @@ class DatabaseService:
                         'updated_at': datetime.now().isoformat()
                     })
                     print(f"Successfully updated collection with {len(collection_data)} cards")
+                    return True
                 else:
                     # Create new collection
                     db.collection('users').document(uid).set({
@@ -193,13 +251,12 @@ class DatabaseService:
                         'updated_at': datetime.now().isoformat()
                     })
                     print(f"Successfully created new collection with {len(collection_data)} cards")
-                return True
-            except Exception as save_error:
-                print(f"Error saving to Firestore: {str(save_error)}")
+                    return True
+            except Exception as e:
+                print(f"Error saving collection to Firestore: {str(e)}")
                 import traceback
                 print(f"Traceback: {traceback.format_exc()}")
                 return False
-
         except Exception as e:
             print(f"Error in save_user_collection: {str(e)}")
             import traceback
@@ -275,22 +332,42 @@ class DatabaseService:
     def save_user_display_cases(uid: str, display_cases: Dict) -> bool:
         """Save user's display cases to Firestore."""
         try:
+            print(f"\n=== Saving Display Cases to Firebase ===")
+            print(f"User ID: {uid}")
+            print(f"Number of display cases to save: {len(display_cases)}")
+            
+            if not uid:
+                print("ERROR: No user ID provided")
+                return False
+                
+            if not display_cases:
+                print("ERROR: No display cases to save")
+                return False
+            
             # Create a serializable copy of the display cases
             serializable_cases = {}
             for name, case in display_cases.items():
                 try:
+                    print(f"\nProcessing display case: {name}")
+                    print(f"Original case data: {case}")
+                    
                     # Process cards to ensure they're serializable
                     processed_cards = []
                     for card in case.get('cards', []):
-                        # Create a new dict with only serializable data
-                        processed_card = {}
-                        for key, value in card.items():
-                            if isinstance(value, (str, int, float, bool, list, dict, type(None))):
-                                processed_card[key] = value
-                            else:
-                                # Convert non-serializable types to string
-                                processed_card[key] = str(value)
-                        processed_cards.append(processed_card)
+                        try:
+                            # Create a new dict with only serializable data
+                            processed_card = {}
+                            for key, value in card.items():
+                                if isinstance(value, (str, int, float, bool, list, dict, type(None))):
+                                    processed_card[key] = value
+                                else:
+                                    # Convert non-serializable types to string
+                                    processed_card[key] = str(value)
+                            processed_cards.append(processed_card)
+                        except Exception as card_error:
+                            print(f"Error processing card: {str(card_error)}")
+                            print(f"Card data: {card}")
+                            continue
                     
                     # Create a serializable display case
                     serializable_case = {
@@ -302,37 +379,62 @@ class DatabaseService:
                         'cards': processed_cards
                     }
                     serializable_cases[name] = serializable_case
+                    print(f"Successfully processed display case: {name}")
                 except Exception as case_error:
                     print(f"Error processing display case {name}: {str(case_error)}")
+                    print(f"Case data: {case}")
                     continue
             
             if not serializable_cases:
-                print("No valid display cases to save after processing")
+                print("ERROR: No valid display cases to save after processing")
                 return False
             
             # Get the current document
             user_ref = db.collection('users').document(uid)
             user_doc = user_ref.get()
             
-            # Check if user document exists, if not create it
-            if not user_doc.exists:
-                print(f"User document for {uid} does not exist. Creating it now.")
-                # Create a basic user document
-                user_ref.set({
-                    'created_at': datetime.now().isoformat(),
-                    'updated_at': datetime.now().isoformat(),
-                    'display_cases': serializable_cases
-                })
-                print(f"Created new user document for {uid}")
-            else:
-                # Update only the display_cases field
-                user_ref.update({
-                    'display_cases': serializable_cases,
-                    'updated_at': datetime.now().isoformat()
-                })
-            
-            print(f"Successfully saved {len(serializable_cases)} display cases")
-            return True
+            try:
+                # If user document doesn't exist, create it with all required fields
+                if not user_doc.exists:
+                    print(f"User document for {uid} does not exist. Creating it now.")
+                    user_ref.set({
+                        'display_cases': serializable_cases,
+                        'created_at': datetime.now().isoformat(),
+                        'updated_at': datetime.now().isoformat(),
+                        'collection': [],  # Initialize empty collection
+                        'preferences': {
+                            'display_name': 'User',
+                            'theme': 'light',
+                            'currency': 'USD',
+                            'notifications': True,
+                            'default_sort': 'date_added',
+                            'default_view': 'grid',
+                            'price_alerts': False,
+                            'market_trends': True,
+                            'collection_stats': True
+                        }
+                    })
+                    print(f"Created new user document for {uid}")
+                else:
+                    # Get existing display cases
+                    existing_cases = user_doc.to_dict().get('display_cases', {})
+                    # Merge with new cases
+                    existing_cases.update(serializable_cases)
+                    # Update only the display_cases field
+                    user_ref.update({
+                        'display_cases': existing_cases,
+                        'updated_at': datetime.now().isoformat()
+                    })
+                    print(f"Updated display cases for user {uid}")
+                
+                print(f"Successfully saved {len(serializable_cases)} display cases")
+                return True
+            except Exception as save_error:
+                print(f"Error during Firebase save operation: {str(save_error)}")
+                print(f"Error type: {type(save_error).__name__}")
+                import traceback
+                print(f"Traceback: {traceback.format_exc()}")
+                return False
                 
         except Exception as e:
             print(f"Error in save_user_display_cases: {str(e)}")
@@ -357,4 +459,52 @@ class DatabaseService:
             print(f"Error getting user display cases: {str(e)}")
             import traceback
             print(f"Traceback: {traceback.format_exc()}")
-            return {} 
+            return {}
+
+    @staticmethod
+    def save_display_cases(uid: str, display_cases: Dict) -> bool:
+        """Save display cases to Firestore."""
+        try:
+            # Validate and prepare display cases data
+            validated_cases = {}
+            for name, case in display_cases.items():
+                # Ensure all cards have valid photo data
+                valid_cards = []
+                for card in case.get('cards', []):
+                    if 'photo' in card and card['photo']:
+                        # Convert photo to string if needed
+                        if not isinstance(card['photo'], str):
+                            card['photo'] = str(card['photo'])
+                        valid_cards.append(card)
+                    else:
+                        print(f"[DEBUG] Skipping card {card.get('player_name', 'Unknown')} in display case {name} - no valid photo")
+                
+                # Only include display cases with valid cards
+                if valid_cards:
+                    validated_cases[name] = {
+                        'name': str(case.get('name', '')),
+                        'description': str(case.get('description', '')),
+                        'tags': [str(tag) for tag in case.get('tags', [])],
+                        'cards': valid_cards,
+                        'total_value': float(case.get('total_value', 0.0)),
+                        'created_date': str(case.get('created_date', datetime.now().isoformat()))
+                    }
+
+            if not validated_cases:
+                print("[ERROR] No valid display cases to save")
+                return False
+
+            # Save to Firestore
+            db.collection('users').document(uid).update({
+                'display_cases': validated_cases,
+                'updated_at': datetime.now().isoformat()
+            })
+            
+            print(f"[DEBUG] Successfully saved {len(validated_cases)} display cases")
+            return True
+            
+        except Exception as e:
+            print(f"[ERROR] Failed to save display cases: {str(e)}")
+            import traceback
+            print(f"Traceback: {traceback.format_exc()}")
+            return False 
