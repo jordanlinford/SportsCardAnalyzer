@@ -1,5 +1,4 @@
 """Theme manager for the Sports Card Analyzer app."""
-import streamlit as st
 import os
 from .theme_config import STREAMLIT_THEME, CUSTOM_CSS, LOGO_PATH, LOGO_WIDTH, LOGO_HEIGHT
 
