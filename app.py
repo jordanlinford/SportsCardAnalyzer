@@ -7,6 +7,25 @@ st.set_page_config(
     layout="wide"
 )
 
+# Temporarily comment out everything else
+# import subprocess
+# import sys
+# from pathlib import Path
+# import logging
+# from modules.core.firebase_manager import FirebaseManager
+# from modules.ui.theme.theme_manager import ThemeManager
+# from modules.ui.branding import BrandingComponent
+
+st.write("Hello world")  # test line
+import streamlit as st
+
+# ✅ Must be the first Streamlit command
+st.set_page_config(
+    page_title="Sports Card Analyzer",
+    page_icon="📈",
+    layout="wide"
+)
+
 import subprocess
 import sys
 from pathlib import Path
