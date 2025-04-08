@@ -1,4 +1,11 @@
 import streamlit as st
+import subprocess
+import sys
+
+# Debug: Show installed packages
+result = subprocess.run([sys.executable, "-m", "pip", "list"], capture_output=True, text=True)
+st.text("Installed Packages:\n" + result.stdout)
+import streamlit as st
 import sys
 from pathlib import Path
 import logging

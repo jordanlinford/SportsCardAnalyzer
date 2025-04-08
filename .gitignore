@@ -48,4 +48,4 @@ firebase-admin-sdk.json
 modules/firebase/serviceAccountKey.json
 
 # Streamlit
-.streamlit/ 
+#.streamlit/ 
