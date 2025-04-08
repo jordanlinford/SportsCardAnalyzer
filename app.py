@@ -1,11 +1,13 @@
 import streamlit as st
-import subprocess
-import sys
 
-# Debug: Show installed packages
-result = subprocess.run([sys.executable, "-m", "pip", "list"], capture_output=True, text=True)
-st.text("Installed Packages:\n" + result.stdout)
-import streamlit as st
+# ✅ Must be the first Streamlit command
+st.set_page_config(
+    page_title="Sports Card Analyzer",
+    page_icon="📈",
+    layout="wide"
+)
+
+import subprocess
 import sys
 from pathlib import Path
 import logging
