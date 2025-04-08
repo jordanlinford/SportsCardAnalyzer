@@ -1,6 +1,5 @@
 import firebase_admin
 from firebase_admin import credentials, auth, firestore
-import streamlit as st
 import logging
 
 logger = logging.getLogger(__name__)
