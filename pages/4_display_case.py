@@ -19,6 +19,7 @@ from modules.ui.components.CardGrid import render_card_grid # type: ignore
 from modules.ui.components.DisplayCaseHeader import render_display_case_header # type: ignore
 from modules.core.firebase_manager import FirebaseManager
 from modules.ui.components.LikeButton import render_like_button # type: ignore
+from modules.ui.components.CommentsSection import render_comments_section
 
 st.set_page_config(
     page_title="Display Case - Sports Card Analyzer Pro",
@@ -67,6 +68,33 @@ def init_session_state():
         st.session_state.bg_choice = "Minimal Dark"
     if 'last_uid' not in st.session_state:
         st.session_state.last_uid = None
+        
+    # Check if user is logged in
+    if st.session_state.user is None:
+        try:
+            # Get current user from Firebase
+            current_user = FirebaseManager.get_current_user()
+            if current_user:
+                st.session_state.user = {
+                    'uid': current_user.uid,
+                    'email': current_user.email
+                }
+                st.session_state.uid = current_user.uid
+        except Exception as e:
+            st.error(f"Error initializing user session: {str(e)}")
+            st.session_state.user = None
+            st.session_state.uid = None
+            
+    # Initialize DisplayCaseManager if we have a user and collection
+    if st.session_state.uid and not st.session_state.display_case_manager:
+        try:
+            st.session_state.display_case_manager = DisplayCaseManager(
+                uid=st.session_state.uid,
+                collection=st.session_state.collection
+            )
+        except Exception as e:
+            st.error(f"Error initializing DisplayCaseManager: {str(e)}")
+            st.session_state.display_case_manager = None
 
 def display_case_grid(display_case):
     """Display cards in a grid format, dynamically filtered from current collection"""
@@ -127,7 +155,6 @@ def display_case_grid(display_case):
                                     st.warning("Invalid image format")
                         except Exception as e:
                             st.error(f"Failed to display card: {str(e)}")
-                            st.write("Card data:", card)
         
         st.markdown('</div>', unsafe_allow_html=True)
 
@@ -426,8 +453,13 @@ def handle_card_click(card):
 
 def get_share_url(display_case):
     """Generate share URL for display case"""
-    base_url = st.experimental_get_query_params().get('base_url', [''])[0]
-    return f"{base_url}/case/{st.session_state['user']['uid']}/{display_case['name'].lower().replace(' ', '-')}"
+    base_url = st.query_params.get('base_url', [''])[0]
+    # Check if user information is available
+    if 'user' in st.session_state and st.session_state.user and 'uid' in st.session_state.user:
+        return f"{base_url}/case/{st.session_state.user['uid']}/{display_case['name'].lower().replace(' ', '-')}"
+    else:
+        # Return a default URL or handle the case where user is not logged in
+        return f"{base_url}/case/public/{display_case['name'].lower().replace(' ', '-')}"
 
 def handle_like(case_id: str, like: bool):
     """Handle like button click"""
@@ -435,7 +467,7 @@ def handle_like(case_id: str, like: bool):
         st.rerun()
 
 def main():
-    st.title("Display Case")
+    st.title("Display Cases")
     init_session_state()
     
     # Check if user has changed
@@ -538,14 +570,15 @@ def main():
                     on_share=get_share_url
                 )
                 
-                # Add like button
-                likes, is_liked = st.session_state['display_case_manager'].get_case_likes(case['id'])
-                render_like_button(
-                    case['id'],
-                    initial_likes=likes,
-                    is_liked=is_liked,
-                    on_like=handle_like
-                )
+                # Add like button if case has an ID
+                if 'id' in case:
+                    likes, is_liked = st.session_state['display_case_manager'].get_case_likes(case['id'])
+                    render_like_button(
+                        case['id'],
+                        initial_likes=likes,
+                        is_liked=is_liked,
+                        on_like=handle_like
+                    )
                 
                 # Sorting options
                 col1, col2 = st.columns([1, 3])
@@ -603,6 +636,17 @@ def main():
                             if st.button("Close"):
                                 st.session_state['show_card_details'] = False
                                 st.rerun()
+
+                # Comments section if case has an ID
+                if 'id' in case:
+                    comments = st.session_state.display_case_manager.get_comments(case['id'])
+                    render_comments_section(
+                        case_id=case['id'],
+                        comments=comments,
+                        on_add_comment=st.session_state.display_case_manager.add_comment,
+                        on_delete_comment=st.session_state.display_case_manager.delete_comment,
+                        current_user_id=st.session_state['user']['uid'] if 'user' in st.session_state and st.session_state.user and 'uid' in st.session_state.user else None
+                    )
         else:
             st.info("No display cases found. Create one using the form above!")
 

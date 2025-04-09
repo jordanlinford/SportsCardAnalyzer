@@ -6,7 +6,8 @@ from ..database.service import DatabaseService
 import ast
 import json
 import base64
-from ..firebase.manager import FirebaseManager
+from ..core.firebase_manager import FirebaseManager
+import streamlit as st
 
 class DisplayCaseManager:
     def __init__(self, uid: str, collection: pd.DataFrame):
@@ -848,4 +849,78 @@ class DisplayCaseManager:
             return likes, is_liked
         except Exception as e:
             print(f"Error getting case likes: {str(e)}")
-            return 0, False 
+            return 0, False
+
+    def add_comment(self, case_id: str, comment: str) -> bool:
+        """Add a comment to a display case"""
+        try:
+            # Get Firestore client
+            db = FirebaseManager.get_firestore_client()
+            if not db:
+                print("Error: Firestore client not initialized")
+                return False
+            
+            # Get current user's UID
+            uid = self.uid
+            
+            # Add comment to Firestore
+            comments_ref = db.collection('display_cases').document(case_id).collection('comments')
+            comments_ref.add({
+                'uid': uid,
+                'comment': comment,
+                'timestamp': datetime.now(),
+                'username': st.session_state.get('user', {}).get('displayName', 'Anonymous')
+            })
+            
+            return True
+        except Exception as e:
+            print(f"Error adding comment: {str(e)}")
+            return False
+
+    def get_comments(self, case_id: str) -> List[Dict]:
+        """Get all comments for a display case"""
+        try:
+            # Get Firestore client
+            db = FirebaseManager.get_firestore_client()
+            if not db:
+                print("Error: Firestore client not initialized")
+                return []
+            
+            # Get comments from Firestore
+            comments_ref = db.collection('display_cases').document(case_id).collection('comments')
+            comments = []
+            for doc in comments_ref.order_by('timestamp', direction='DESCENDING').get():
+                comment_data = doc.to_dict()
+                comment_data['id'] = doc.id
+                comments.append(comment_data)
+            
+            return comments
+        except Exception as e:
+            print(f"Error getting comments: {str(e)}")
+            return []
+
+    def delete_comment(self, case_id: str, comment_id: str) -> bool:
+        """Delete a comment from a display case"""
+        try:
+            # Get Firestore client
+            db = FirebaseManager.get_firestore_client()
+            if not db:
+                print("Error: Firestore client not initialized")
+                return False
+            
+            # Get current user's UID
+            uid = self.uid
+            
+            # Get the comment document
+            comment_ref = db.collection('display_cases').document(case_id).collection('comments').document(comment_id)
+            comment = comment_ref.get()
+            
+            # Check if comment exists and user is the owner
+            if comment.exists and comment.get('uid') == uid:
+                comment_ref.delete()
+                return True
+            
+            return False
+        except Exception as e:
+            print(f"Error deleting comment: {str(e)}")
+            return False 
