@@ -15,6 +15,10 @@ from modules.display_case.manager import DisplayCaseManager
 import ast
 from modules.database.service import DatabaseService
 import requests
+from modules.ui.components.CardGrid import render_card_grid # type: ignore
+from modules.ui.components.DisplayCaseHeader import render_display_case_header # type: ignore
+from modules.core.firebase_manager import FirebaseManager
+from modules.ui.components.LikeButton import render_like_button # type: ignore
 
 st.set_page_config(
     page_title="Display Case - Sports Card Analyzer Pro",
@@ -415,6 +419,21 @@ def display_card(card):
         st.error(f"Failed to display card: {str(e)}")
         st.write("Debug: Error traceback:", traceback.format_exc())
 
+def handle_card_click(card):
+    """Handle card click event"""
+    st.session_state['selected_card'] = card
+    st.session_state['show_card_details'] = True
+
+def get_share_url(display_case):
+    """Generate share URL for display case"""
+    base_url = st.experimental_get_query_params().get('base_url', [''])[0]
+    return f"{base_url}/case/{st.session_state['user']['uid']}/{display_case['name'].lower().replace(' ', '-')}"
+
+def handle_like(case_id: str, like: bool):
+    """Handle like button click"""
+    if st.session_state['display_case_manager'].like_display_case(case_id, like):
+        st.rerun()
+
 def main():
     st.title("Display Case")
     init_session_state()
@@ -478,29 +497,29 @@ def main():
             display_case_name = st.text_input("Display Case Name", key="new_display_case_name")
             
             # Get available tags
-        if st.session_state.display_case_manager:
-            available_tags = st.session_state.display_case_manager.get_all_tags()
-            if available_tags:
-                tag = st.selectbox("Select Tag", options=available_tags, key="new_display_case_tag")
-            else:
-                st.warning("No tags found in your collection. Please add tags to your cards first.")
-                return
-            
-            if st.button("Create Display Case", key="create_display_case"):
-                if display_case_name and tag:
-                    try:
-                        # Create the display case
-                        display_case = st.session_state.display_case_manager.create_simple_display_case(display_case_name, tag)
-                        
-                        if display_case:
-                            st.success(f"Successfully created display case '{display_case_name}' with {len(display_case['cards'])} cards")
-                            st.rerun()  # Refresh the page to show the new display case
-                        else:
-                            st.error("Failed to create display case. Please try again.")
-                    except Exception as e:
-                        st.error(f"Error creating display case: {str(e)}")
+            if st.session_state.display_case_manager:
+                available_tags = st.session_state.display_case_manager.get_all_tags()
+                if available_tags:
+                    tag = st.selectbox("Select Tag", options=available_tags, key="new_display_case_tag")
                 else:
-                    st.warning("Please enter both a display case name and select a tag")
+                    st.warning("No tags found in your collection. Please add tags to your cards first.")
+                    return
+                
+                if st.button("Create Display Case", key="create_display_case"):
+                    if display_case_name and tag:
+                        try:
+                            # Create the display case
+                            display_case = st.session_state.display_case_manager.create_simple_display_case(display_case_name, tag)
+                            
+                            if display_case:
+                                st.success(f"Successfully created display case '{display_case_name}' with {len(display_case['cards'])} cards")
+                                st.rerun()  # Refresh the page to show the new display case
+                            else:
+                                st.error("Failed to create display case. Please try again.")
+                        except Exception as e:
+                            st.error(f"Error creating display case: {str(e)}")
+                    else:
+                        st.warning("Please enter both a display case name and select a tag")
     
     with tab2:
         if st.session_state.display_case_manager is None:
@@ -511,39 +530,79 @@ def main():
         if display_cases:
             selected_case = st.selectbox("Select Display Case", options=list(display_cases.keys()))
             if selected_case:
-                display_case = display_cases[selected_case]
+                case = display_cases[selected_case]
                 
-                # Display case details
-                st.subheader(display_case['name'])
-                if display_case.get('description'):
-                    st.write(display_case['description'])
-                if display_case.get('tags'):
-                    st.write(f"Tags: {', '.join(display_case['tags'])}")
-                st.write(f"Total Value: ${display_case.get('total_value', 0):,.2f}")
+                # Render header
+                render_display_case_header(
+                    case,
+                    on_share=get_share_url
+                )
                 
-                # Display case actions
-                col1, col2, col3 = st.columns(3)
+                # Add like button
+                likes, is_liked = st.session_state['display_case_manager'].get_case_likes(case['id'])
+                render_like_button(
+                    case['id'],
+                    initial_likes=likes,
+                    is_liked=is_liked,
+                    on_like=handle_like
+                )
                 
+                # Sorting options
+                col1, col2 = st.columns([1, 3])
                 with col1:
-                    if st.button("🔄 Refresh"):
-                        st.session_state.display_case_manager.load_display_cases(force_refresh=True)
-                        st.rerun()
-                
+                    sort_by = st.selectbox(
+                        "Sort by",
+                        ["ROI", "Value", "Year", "Player"],
+                        index=0
+                    )
                 with col2:
-                    if st.button("🗑️ Delete"):
-                        if st.session_state.display_case_manager.delete_display_case(selected_case):
-                            st.success(f"Deleted display case: {selected_case}")
-                            st.rerun()
-                        else:
-                            st.error("Failed to delete display case")
-
-                with col3:
-                    share_url = st.session_state.display_case_manager.get_share_url(selected_case)
-                    if share_url:
-                        st.markdown(f"[🔗 Share]({share_url})")
+                    sort_order = st.radio(
+                        "Order",
+                        ["Descending", "Ascending"],
+                        horizontal=True
+                    )
                 
-                # Display the cards in a grid
-                display_case_grid(display_case)
+                # Sort cards
+                cards = case.get('cards', [])
+                if sort_by == "ROI":
+                    cards.sort(key=lambda x: x.get('roi', 0), reverse=(sort_order == "Descending"))
+                elif sort_by == "Value":
+                    cards.sort(key=lambda x: x.get('current_value', 0), reverse=(sort_order == "Descending"))
+                elif sort_by == "Year":
+                    cards.sort(key=lambda x: x.get('year', ''), reverse=(sort_order == "Descending"))
+                elif sort_by == "Player":
+                    cards.sort(key=lambda x: x.get('player_name', ''), reverse=(sort_order == "Descending"))
+                
+                # Render card grid
+                render_card_grid(
+                    cards,
+                    on_click=handle_card_click
+                )
+                
+                # Card details modal
+                if st.session_state.get('show_card_details', False):
+                    with st.expander("Card Details", expanded=True):
+                        card = st.session_state['selected_card']
+                        col1, col2 = st.columns([1, 2])
+                        with col1:
+                            st.image(card.get('photo', ''), use_column_width=True)
+                        with col2:
+                            st.subheader(card.get('player_name', ''))
+                            st.write(f"**Year:** {card.get('year', '')}")
+                            st.write(f"**Card Set:** {card.get('card_set', '')}")
+                            st.write(f"**Card Number:** {card.get('card_number', '')}")
+                            st.write(f"**Variation:** {card.get('variation', '')}")
+                            st.write(f"**Condition:** {card.get('condition', '')}")
+                            st.write(f"**Purchase Price:** ${card.get('purchase_price', 0):,.2f}")
+                            st.write(f"**Current Value:** ${card.get('current_value', 0):,.2f}")
+                            st.write(f"**ROI:** {card.get('roi', 0):.1f}%")
+                            st.write(f"**Purchase Date:** {card.get('purchase_date', '')}")
+                            st.write(f"**Notes:** {card.get('notes', '')}")
+                            st.write(f"**Tags:** {', '.join(card.get('tags', []))}")
+                        
+                            if st.button("Close"):
+                                st.session_state['show_card_details'] = False
+                                st.rerun()
         else:
             st.info("No display cases found. Create one using the form above!")
 

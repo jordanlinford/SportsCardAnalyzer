@@ -6,6 +6,7 @@ from ..database.service import DatabaseService
 import ast
 import json
 import base64
+from ..firebase.manager import FirebaseManager
 
 class DisplayCaseManager:
     def __init__(self, uid: str, collection: pd.DataFrame):
@@ -788,4 +789,63 @@ class DisplayCaseManager:
             print(f"Error previewing cards: {str(e)}")
             import traceback
             print(f"Traceback: {traceback.format_exc()}")
-            return [] 
+            return []
+
+    def like_display_case(self, case_id: str, like: bool) -> bool:
+        """Like or unlike a display case"""
+        try:
+            # Get Firestore client
+            db = FirebaseManager.get_firestore_client()
+            if not db:
+                print("Error: Firestore client not initialized")
+                return False
+            
+            # Get current user's UID
+            uid = self.uid
+            
+            # Update likes in Firestore
+            likes_ref = db.collection('display_cases').document(case_id).collection('likes')
+            
+            if like:
+                # Add like
+                likes_ref.document(uid).set({
+                    'timestamp': datetime.now(),
+                    'uid': uid
+                })
+            else:
+                # Remove like
+                likes_ref.document(uid).delete()
+            
+            # Update local display case
+            if case_id in self.display_cases:
+                case = self.display_cases[case_id]
+                likes = case.get('likes', 0)
+                case['likes'] = likes + (1 if like else -1)
+                case['is_liked'] = like
+            
+            return True
+        except Exception as e:
+            print(f"Error liking display case: {str(e)}")
+            return False
+
+    def get_case_likes(self, case_id: str) -> tuple[int, bool]:
+        """Get number of likes and whether current user has liked the case"""
+        try:
+            # Get Firestore client
+            db = FirebaseManager.get_firestore_client()
+            if not db:
+                print("Error: Firestore client not initialized")
+                return 0, False
+            
+            # Get current user's UID
+            uid = self.uid
+            
+            # Get likes from Firestore
+            likes_ref = db.collection('display_cases').document(case_id).collection('likes')
+            likes = len(list(likes_ref.get()))
+            is_liked = likes_ref.document(uid).get().exists
+            
+            return likes, is_liked
+        except Exception as e:
+            print(f"Error getting case likes: {str(e)}")
+            return 0, False 
