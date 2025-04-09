@@ -19,6 +19,7 @@ import os
 from modules.database.service import DatabaseService
 from modules.database.models import Card, CardCondition
 from typing import List, Dict, Any, Union
+from modules.ui.theme.theme_manager import ThemeManager
 
 def get_score_color(score):
     """Return color based on score value"""
@@ -347,7 +348,7 @@ def display_variations_grid(variation_groups):
                 
                 if group['representative_image']:
                     st.image(group['representative_image'], 
-                            use_column_width=True,
+                            use_container_width=True,
                             output_format="JPEG",
                             caption=group['variation_name'])
                 
@@ -487,7 +488,14 @@ def display_market_analysis(card_data, market_data):
     if 'selected_variation' in st.session_state and st.session_state.selected_variation:
         selected_card = st.session_state.selected_variation['cards'][0] if st.session_state.selected_variation['cards'] else None
         if selected_card and selected_card.get('image_url'):
-            display_image(selected_card['image_url'])
+            # Create a container for the image with custom width
+            col1, col2, col3 = st.columns([1, 2, 1])
+            with col2:
+                st.image(selected_card['image_url'], 
+                        width=300,  # Set a fixed width that's 75% smaller than default
+                        use_container_width=False,
+                        output_format="JPEG",
+                        caption=selected_card.get('title', 'Card Image'))
     
     # Display market metrics
     st.markdown("### Market Metrics")
@@ -1018,30 +1026,26 @@ def load_collection_from_firebase():
     ])
 
 def export_collection_backup():
-    """Export collection backup to desktop"""
+    """Export collection backup as a downloadable CSV file"""
     try:
         # Check if collection exists and has data
         if not hasattr(st.session_state, 'collection') or st.session_state.collection.empty:
             st.error("No collection data available to backup.")
             return False, "No collection data available"
-            
-        # Use specific backup name
-        backup_filename = "APRIL 2 BACKUP.csv"
         
-        # Get desktop path
-        desktop_path = os.path.expanduser("~/Desktop")
-        backup_path = os.path.join(desktop_path, backup_filename)
+        # Convert collection to CSV
+        csv = st.session_state.collection.to_csv(index=False)
         
-        # Export collection to CSV
-        st.session_state.collection.to_csv(backup_path, index=False)
+        # Create download button
+        st.download_button(
+            label="Download Collection Backup",
+            data=csv,
+            file_name="collection_backup.csv",
+            mime="text/csv",
+            use_container_width=True
+        )
         
-        # Verify the file was created
-        if os.path.exists(backup_path):
-            st.success(f"Backup file created successfully at: {backup_path}")
-            return True, backup_path
-        else:
-            st.error("Backup file was not created successfully.")
-            return False, "File creation failed"
+        return True, "Download ready"
             
     except Exception as e:
         st.error(f"Error creating backup: {str(e)}")
@@ -1197,7 +1201,7 @@ def display_image(image_url):
     if image_url:
         st.image(
             image_url,
-            use_column_width=True,
+            use_container_width=True,
             output_format="JPEG",
             caption="Card Image"
         )
@@ -1215,7 +1219,7 @@ def main():
     
     # If user is not logged in, redirect to login page
     if not st.session_state.user:
-        st.switch_page("login")
+        st.switch_page("pages/0_login.py")
     
     # Get user preferences with defaults
     user_preferences = st.session_state.preferences or {
@@ -1244,6 +1248,19 @@ def main():
                 st.success(f"Collection backup created successfully!\nSaved to: {result}")
             else:
                 st.error(f"Failed to create backup: {result}")
+    
+    # Add billing section
+    with ThemeManager.styled_card():
+        st.subheader("Billing")
+        st.info("💳 Billing management coming soon!")
+
+        # Placeholder for future billing features
+        st.markdown('''
+        **Coming Soon:**
+        - Subscription management
+        - Payment history
+        - Billing preferences
+        ''')
     
     # Initialize analyzers
     scraper = EbayInterface()

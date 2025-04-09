@@ -18,6 +18,10 @@ from modules.ui.theme.theme_manager import ThemeManager
 from io import BytesIO
 import json
 from modules.core.card_value_analyzer import CardValueAnalyzer # type: ignore
+from modules.core.firebase_manager import FirebaseManager  # Updated import path
+from modules.ui.components import CardDisplay
+from modules.ui.theme.theme_manager import ThemeManager
+import os
 
 # Configure the page
 st.set_page_config(
@@ -55,6 +59,18 @@ def init_session_state():
         st.session_state.user = None
     if 'uid' not in st.session_state:
         st.session_state.uid = None
+    if 'collection' not in st.session_state:
+        st.session_state.collection = load_collection_from_firebase()
+    if 'edit_mode' not in st.session_state:
+        st.session_state.edit_mode = False
+    if 'selected_card' not in st.session_state:
+        st.session_state.selected_card = None
+    if 'search_query' not in st.session_state:
+        st.session_state.search_query = ""
+    if 'filter_condition' not in st.session_state:
+        st.session_state.filter_condition = "All"
+    if 'sort_by' not in st.session_state:
+        st.session_state.sort_by = "player_name"
 
 def convert_df_to_excel(df):
     """Convert DataFrame to Excel file"""
@@ -202,7 +218,7 @@ def display_add_card_form():
         
         # Display pre-populated image if available
         if prefilled.get('photo'):
-            st.image(prefilled['photo'], caption="Card Image from Market Analysis", use_column_width=True)
+            st.image(prefilled['photo'], caption="Card Image from Market Analysis", use_container_width=True)
         else:
             photo = st.file_uploader("Upload Photo", type=["jpg", "jpeg", "png"], key="photo")
         
@@ -330,17 +346,17 @@ def display_collection_summary(filtered_collection):
         st.info("No cards in collection")
         return
     
-    # Calculate summary metrics
+    # Calculate summary metrics with proper type conversion
     total_value = sum(
-        card.get('current_value', 0) if isinstance(card, dict) 
-        else getattr(card, 'current_value', 0) if hasattr(card, 'current_value')
-        else 0
+        float(card.get('current_value', 0)) if isinstance(card, dict)
+        else float(getattr(card, 'current_value', 0)) if hasattr(card, 'current_value')
+        else 0.0
         for card in filtered_collection
     )
     total_cost = sum(
-        card.get('purchase_price', 0) if isinstance(card, dict)
-        else getattr(card, 'purchase_price', 0) if hasattr(card, 'purchase_price')
-        else 0
+        float(card.get('purchase_price', 0)) if isinstance(card, dict)
+        else float(getattr(card, 'purchase_price', 0)) if hasattr(card, 'purchase_price')
+        else 0.0
         for card in filtered_collection
     )
     total_roi = ((total_value - total_cost) / total_cost * 100) if total_cost > 0 else 0
@@ -464,8 +480,27 @@ def edit_card_form(card_index, card_data):
         
         photo = st.file_uploader("Upload New Photo", type=["jpg", "jpeg", "png"], key="edit_photo")
         
-        # Add submit button
-        submitted = st.form_submit_button("Save Changes")
+        # Create two columns for buttons
+        col1, col2, col3 = st.columns([1, 1, 1])
+        
+        with col1:
+            # Add submit button
+            submitted = st.form_submit_button("Save Changes")
+        
+        with col2:
+            # Add cancel button
+            if st.form_submit_button("Cancel"):
+                st.session_state.editing_card = None
+                st.session_state.editing_data = None
+                st.rerun()
+        
+        with col3:
+            # Add delete button
+            if st.form_submit_button("Delete Card"):
+                if delete_card(card_index):
+                    st.session_state.editing_card = None
+                    st.session_state.editing_data = None
+                    st.rerun()
         
         if submitted:
             # Validate required fields
@@ -544,60 +579,47 @@ def load_collection_from_firebase():
     """Load the user's collection from Firebase"""
     try:
         if not st.session_state.user or not st.session_state.uid:
+            st.warning("User not logged in")
             return []
         
-        # Get user document
-        user_doc = db.collection('users').document(st.session_state.uid).get()
-        if not user_doc.exists:
+        # Ensure Firebase is initialized
+        if not FirebaseManager.initialize():
+            st.error("Failed to initialize Firebase")
             return []
         
-        user_data = user_doc.to_dict()
-        if 'collection' not in user_data:
-            return []
-        
-        # Convert collection to list
-        collection = user_data['collection']
-        
-        # Ensure all required fields exist and process image data
-        for card in collection:
-            if 'photo' not in card:
-                card['photo'] = "https://placehold.co/300x400/e6e6e6/666666.png?text=No+Card+Image"
-            elif card['photo'] and isinstance(card['photo'], str):
-                # If it's a URL, ensure it's accessible
-                if card['photo'].startswith('http'):
-                    try:
-                        response = requests.head(card['photo'], timeout=5)
-                        if response.status_code != 200:
-                            st.warning(f"Invalid image URL for card {card.get('player_name', 'Unknown')}. Using placeholder.")
-                            card['photo'] = "https://placehold.co/300x400/e6e6e6/666666.png?text=No+Card+Image"
-                    except:
-                        st.warning(f"Failed to validate image URL for card {card.get('player_name', 'Unknown')}. Using placeholder.")
-                        card['photo'] = "https://placehold.co/300x400/e6e6e6/666666.png?text=No+Card+Image"
-                # If it's base64, ensure it's valid
-                elif card['photo'].startswith('data:image'):
-                    try:
-                        base64_part = card['photo'].split(',')[1]
-                        base64.b64decode(base64_part)
-                    except:
-                        st.warning(f"Invalid base64 image for card {card.get('player_name', 'Unknown')}. Using placeholder.")
-                        card['photo'] = "https://placehold.co/300x400/e6e6e6/666666.png?text=Invalid+Image"
-                else:
-                    # Invalid image format
-                    st.warning(f"Invalid image format for card {card.get('player_name', 'Unknown')}. Using placeholder.")
-                    card['photo'] = "https://placehold.co/300x400/e6e6e6/666666.png?text=No+Card+Image"
+        # Get user document using FirebaseManager
+        try:
+            users_collection = FirebaseManager.get_collection('users')
+            if not users_collection:
+                st.error("Failed to access Firestore collection")
+                return []
+                
+            user_doc = users_collection.document(st.session_state.uid).get()
+            if not user_doc.exists:
+                st.warning("No user data found")
+                return []
             
-            # Ensure other required fields exist
-            if 'purchase_price' not in card:
-                card['purchase_price'] = 0.0
-            if 'current_value' not in card:
-                card['current_value'] = 0.0
-            if 'purchase_date' not in card:
-                card['purchase_date'] = datetime.now().isoformat()
-            if 'last_updated' not in card:
-                card['last_updated'] = datetime.now().isoformat()
-        
-        return collection
-        
+            user_data = user_doc.to_dict()
+            if 'collection' not in user_data:
+                st.info("No collection found for user")
+                return []
+            
+            # Convert collection to list
+            collection = user_data['collection']
+            
+            # Ensure all required fields exist and process image data
+            for card in collection:
+                if 'photo' not in card:
+                    card['photo'] = "https://placehold.co/300x400/e6e6e6/666666.png?text=No+Card+Image"
+                if 'last_updated' not in card:
+                    card['last_updated'] = datetime.now().isoformat()
+            
+            return collection
+            
+        except Exception as e:
+            st.error(f"Error accessing Firestore: {str(e)}")
+            return []
+            
     except Exception as e:
         st.error(f"Error loading collection: {str(e)}")
         return []
@@ -682,8 +704,8 @@ def display_collection_grid(filtered_collection, is_shared=False):
     ))
 
 def display_collection_table(filtered_collection):
-    """Display collection in a table format"""
-    if not has_cards(filtered_collection):
+    """Display collection in a table format."""
+    if filtered_collection is None or (isinstance(filtered_collection, pd.DataFrame) and filtered_collection.empty) or (isinstance(filtered_collection, list) and len(filtered_collection) == 0):
         st.info("No cards to display")
         return
     
@@ -693,18 +715,44 @@ def display_collection_table(filtered_collection):
         for card in filtered_collection
     ])
     
-    # Display table
+    # Ensure tags are always lists
+    if 'tags' in df.columns:
+        df['tags'] = df['tags'].apply(lambda x: x if isinstance(x, list) else [x] if pd.notna(x) else [])
+    
+    # Define column order and configuration
+    column_config = {
+        "player_name": st.column_config.TextColumn("Player Name", width="medium"),
+        "year": st.column_config.TextColumn("Year", width="small"),
+        "card_set": st.column_config.TextColumn("Card Set", width="medium"),
+        "card_number": st.column_config.TextColumn("Card #", width="small"),
+        "variation": st.column_config.TextColumn("Variation", width="medium"),
+        "condition": st.column_config.TextColumn("Condition", width="medium"),
+        "purchase_price": st.column_config.NumberColumn("Purchase Price", format="$%.2f", width="small"),
+        "current_value": st.column_config.NumberColumn("Current Value", format="$%.2f", width="small"),
+        "roi": st.column_config.NumberColumn("ROI", format="%.1f%%", width="small"),
+        "purchase_date": st.column_config.DateColumn("Purchase Date", format="YYYY-MM-DD", width="small"),
+        "last_updated": st.column_config.DatetimeColumn("Last Updated", format="YYYY-MM-DD HH:mm", width="medium"),
+        "notes": st.column_config.TextColumn("Notes", width="large"),
+        "tags": st.column_config.ListColumn("Tags", width="medium"),
+        "photo": st.column_config.ImageColumn("Photo", width="small")
+    }
+    
+    # Reorder columns to match the desired display order
+    column_order = [
+        "player_name", "year", "card_set", "card_number", "variation", 
+        "condition", "purchase_price", "current_value", "roi", 
+        "purchase_date", "last_updated", "notes", "tags", "photo"
+    ]
+    
+    # Filter columns to only those that exist in the DataFrame
+    column_order = [col for col in column_order if col in df.columns]
+    
+    # Display table with specified configuration
     st.dataframe(
-        df,
+        df[column_order],
         use_container_width=True,
         hide_index=True,
-        column_config={
-            "photo": st.column_config.ImageColumn("Photo"),
-            "current_value": st.column_config.NumberColumn("Current Value", format="$%.2f"),
-            "purchase_price": st.column_config.NumberColumn("Purchase Price", format="$%.2f"),
-            "roi": st.column_config.NumberColumn("ROI", format="%.1f%%"),
-            "tags": st.column_config.ListColumn("Tags")
-        }
+        column_config=column_config
     )
 
 def has_cards(collection):
@@ -741,6 +789,91 @@ def display_collection():
         }))
     else:
         CardDisplay.display_table(collection)
+
+def generate_sample_template():
+    """Generate a sample Excel template for collection upload"""
+    # Create sample data
+    sample_data = {
+        'Player Name': ['Michael Jordan', 'LeBron James'],
+        'Year': ['1986', '2003'],
+        'Card Set': ['Fleer', 'Topps Chrome'],
+        'Variation': ['Base', 'Refractor'],
+        'Condition': ['PSA 9', 'PSA 10'],
+        'Date Purchased': ['2023-01-15', ''],  # Optional
+        'Purchase Amount': [150.00, ''],  # Optional
+        'Notes': ['Rookie Card', '']  # Optional
+    }
+    
+    # Create DataFrame
+    df = pd.DataFrame(sample_data)
+    
+    # Create Excel file in memory
+    output = io.BytesIO()
+    with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+        df.to_excel(writer, index=False, sheet_name='Collection Template')
+        
+        # Get workbook and worksheet objects
+        workbook = writer.book
+        worksheet = writer.sheets['Collection Template']
+        
+        # Add formatting
+        header_format = workbook.add_format({
+            'bold': True,
+            'bg_color': '#D9E1F2',
+            'border': 1
+        })
+        
+        # Format headers
+        for col_num, value in enumerate(df.columns.values):
+            worksheet.write(0, col_num, value, header_format)
+            worksheet.set_column(col_num, col_num, 15)  # Set column width
+        
+        # Add instructions
+        instructions = [
+            "Required Fields:",
+            "- Player Name: Full name of the player",
+            "- Year: Year the card was produced (e.g., 1986)",
+            "- Card Set: Name of the set (e.g., Topps, Panini Prizm)",
+            "- Variation: Type of card (e.g., Base, Refractor, Prizm)",
+            "- Condition: Card condition (e.g., PSA 9, Raw)",
+            "",
+            "Optional Fields:",
+            "- Date Purchased: When you bought the card (YYYY-MM-DD)",
+            "- Purchase Amount: How much you paid for the card",
+            "- Notes: Any additional information about the card",
+            "",
+            "Notes:",
+            "- Leave optional fields blank if not applicable",
+            "- Dates will default to today's date if left blank",
+            "- Purchase amounts will default to 0 if left blank"
+        ]
+        
+        for row_num, instruction in enumerate(instructions, start=len(df) + 3):
+            worksheet.write(row_num, 0, instruction)
+    
+    return output.getvalue()
+
+def delete_card(card_index):
+    """Delete a card from the collection"""
+    try:
+        if not st.session_state.collection:
+            st.error("No cards in collection")
+            return False
+        
+        # Remove the card from the collection
+        st.session_state.collection.pop(card_index)
+        
+        # Save the updated collection to Firebase
+        if save_collection_to_firebase(st.session_state.collection):
+            st.success("Card deleted successfully!")
+            return True
+        else:
+            st.error("Failed to save changes to database")
+            return False
+            
+    except Exception as e:
+        st.error(f"Error deleting card: {str(e)}")
+        return False
 
 def main():
     """Main function for the collection manager page"""
@@ -981,11 +1114,26 @@ def main():
                         
                         # Update collection
                         st.session_state.collection = imported_collection
-                        st.success(f"Successfully imported {len(imported_collection)} cards!")
-                        st.balloons()
+                        
+                        # Save to Firebase
+                        if save_collection_to_firebase(imported_collection):
+                            st.success(f"Successfully imported {len(imported_collection)} cards!")
+                            st.balloons()
+                        else:
+                            st.error("Failed to save imported collection to database. Please try again.")
                 
                 except Exception as e:
                     st.error(f"Error importing file: {str(e)}")
+                    st.write("Debug: Error traceback:", traceback.format_exc())
+
+        # Add download template button
+        st.download_button(
+            label="Download Collection Template",
+            data=generate_sample_template(),
+            file_name="collection_template.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            help="Download a template to help format your collection data for upload"
+        )
 
 if __name__ == "__main__":
     main()

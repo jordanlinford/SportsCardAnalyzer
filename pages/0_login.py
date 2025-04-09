@@ -40,16 +40,24 @@ def load_user_preferences(uid):
         Dict with user preferences or None if not found
     """
     try:
-        firestore_client = FirebaseManager.get_firestore_client()
-        if firestore_client is None:
-            print("ERROR: Firestore client is not initialized")
+        # Ensure Firebase is initialized
+        if not FirebaseManager.initialize():
+            print("Failed to initialize Firebase")
             return None
             
-        user_doc = firestore_client.collection('users').document(uid).get()
+        # Get the users collection
+        users_collection = FirebaseManager.get_collection('users')
+        if not users_collection:
+            print("Failed to get users collection")
+            return None
+            
+        # Get the user document
+        user_doc = users_collection.document(uid).get()
         if not user_doc.exists:
             print(f"User document not found for UID: {uid}")
             return None
             
+        # Get user data and preferences
         user_data = user_doc.to_dict()
         return user_data.get('preferences')
     except Exception as e:
@@ -128,8 +136,8 @@ def main():
             try:
                 user = FirebaseManager.sign_in(email, password)
                 st.session_state.user = user
-                st.session_state.uid = user.uid
-                st.session_state.preferences = load_user_preferences(user.uid)
+                st.session_state.uid = user.get('localId')  # Use get() to safely access the field
+                st.session_state.preferences = load_user_preferences(st.session_state.uid)
                 st.session_state.is_new_user = False
                 st.success("Login successful!")
                 st.rerun()
@@ -146,10 +154,10 @@ def main():
             try:
                 user = FirebaseManager.sign_up(email, password, display_name)
                 st.session_state.user = user
-                st.session_state.uid = user.uid
-                st.session_state.preferences = load_user_preferences(user.uid)
+                st.session_state.uid = user.get('localId')  # Use get() to safely access the field
+                st.session_state.preferences = load_user_preferences(st.session_state.uid)
                 st.session_state.is_new_user = True
-                st.success("Sign up successful!")
+                st.success("Account created successfully!")
                 st.rerun()
             except Exception as e:
                 st.error(f"Sign up failed: {str(e)}")
@@ -161,8 +169,8 @@ def main():
         try:
             user = FirebaseManager.sign_in_with_google()
             st.session_state.user = user
-            st.session_state.uid = user.uid
-            st.session_state.preferences = load_user_preferences(user.uid)
+            st.session_state.uid = user.get('localId')  # Use get() to safely access the field
+            st.session_state.preferences = load_user_preferences(st.session_state.uid)
             st.session_state.is_new_user = True
             st.success("Google sign-in successful!")
             st.rerun()

@@ -1,44 +1,22 @@
 """
 This module provides access to Firebase services.
-It imports and re-exports the initialized Firebase components from firebase_init.py.
+It imports and re-exports the initialized Firebase components from FirebaseManager.
 """
 
-from .firebase_init import (
-    get_firebase_app,
-    get_firestore_client,
-    get_pyrebase,
-    get_pyrebase_auth,
-    initialize_all
-)
+from modules.core.firebase_manager import FirebaseManager
+import logging
 
-# Re-export the initialized components
-app = get_firebase_app()
-db = get_firestore_client()
-firebase = get_pyrebase()
-pb_auth = get_pyrebase_auth()
+logger = logging.getLogger(__name__)
 
-# Initialize all components if not already initialized
-if app is None or db is None or firebase is None or pb_auth is None:
-    initialize_all()
-    app = get_firebase_app()
-    db = get_firestore_client()
-    firebase = get_pyrebase()
-    pb_auth = get_pyrebase_auth()
+# Initialize Firebase components
+if not FirebaseManager.initialize():
+    logger.error("Failed to initialize Firebase")
+    raise RuntimeError("Failed to initialize Firebase")
+
+# Get initialized components
+app = FirebaseManager.get_firebase_app()
+db = FirebaseManager.get_firestore_client()
+auth = FirebaseManager.get_auth()
 
 # Define a unique app name
 APP_NAME = 'sports-card-analyzer-app'
-
-# Pyrebase Configuration
-firebase_config = {
-    "apiKey": "AIzaSyAfb2YtBxD5YEWrNpG0J3GN_g0ZfPzsoOE",
-    "authDomain": "sports-card-analyzer.firebaseapp.com",
-    "databaseURL": "https://sports-card-analyzer.firebaseio.com",
-    "projectId": "sports-card-analyzer",
-    "storageBucket": "sports-card-analyzer.firebasestorage.app",
-    "messagingSenderId": "27312906394",
-    "appId": "1:27312906394:web:11296b8bb530daad5a7f23"
-}
-
-# DO NOT reassign pb_auth to auth from firebase_admin
-# This line was causing the issue:
-# pb_auth = auth 

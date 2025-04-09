@@ -37,27 +37,27 @@ def display_collection_grid(filtered_collection, is_shared=False):
                         if photo.startswith('data:image'):
                             # Handle base64 images
                             try:
-                                st.image(photo, use_column_width=True)
+                                st.image(photo, use_container_width=True)
                             except Exception as e:
                                 st.error(f"Error displaying image: {str(e)}")
-                                st.image("https://via.placeholder.com/300x400?text=Image+Error", use_column_width=True)
+                                st.image("https://via.placeholder.com/300x400?text=Image+Error", use_container_width=True)
                         elif photo.startswith('http'):
                             # Handle URL images
                             try:
                                 response = requests.head(photo, timeout=5)
                                 if response.status_code == 200:
-                                    st.image(photo, use_column_width=True)
+                                    st.image(photo, use_container_width=True)
                                 else:
-                                    st.image("https://via.placeholder.com/300x400?text=Image+Not+Available", use_column_width=True)
+                                    st.image("https://via.placeholder.com/300x400?text=Image+Not+Available", use_container_width=True)
                             except:
-                                st.image("https://via.placeholder.com/300x400?text=Image+Not+Available", use_column_width=True)
+                                st.image("https://via.placeholder.com/300x400?text=Image+Not+Available", use_container_width=True)
                         else:
-                            st.image("https://via.placeholder.com/300x400?text=No+Image", use_column_width=True)
+                            st.image("https://via.placeholder.com/300x400?text=No+Image", use_container_width=True)
                     else:
-                        st.image("https://via.placeholder.com/300x400?text=No+Image", use_column_width=True)
+                        st.image("https://via.placeholder.com/300x400?text=No+Image", use_container_width=True)
                 except Exception as e:
                     st.error(f"Error displaying image: {str(e)}")
-                    st.image("https://via.placeholder.com/300x400?text=Image+Error", use_column_width=True)
+                    st.image("https://via.placeholder.com/300x400?text=Image+Error", use_container_width=True)
                 
                 # Safely get card details
                 player_name = card.get('player_name', '') if isinstance(card, dict) else getattr(card, 'player_name', '')
@@ -108,79 +108,55 @@ def display_collection_table(filtered_df):
     # Display the table
     st.dataframe(
         display_df,
-        use_column_width=True,
+        use_container_width=True,
         hide_index=True
     ) 
 
 class CardDisplay:
     @staticmethod
-    def display_image(image_data: str, use_column_width=True):
+    def display_image(image_data: str, use_container_width=True):
         """Display a card image with proper error handling."""
         try:
             if not image_data:
-                st.image("https://placehold.co/300x400/e6e6e6/666666.png?text=No+Card+Image", use_column_width=use_column_width)
+                st.image("https://placehold.co/300x400/e6e6e6/666666.png?text=No+Card+Image", use_container_width=use_container_width)
+                return
+            
+            # Handle URL images
+            if image_data.startswith('http'):
+                try:
+                    response = requests.get(image_data, timeout=5)
+                    if response.status_code == 200:
+                        image = Image.open(io.BytesIO(response.content))
+                        st.image(image, use_container_width=use_container_width)
+                    else:
+                        st.image("https://placehold.co/300x400/e6e6e6/666666.png?text=Invalid+Base64", use_container_width=use_container_width)
+                except:
+                    st.image("https://placehold.co/300x400/e6e6e6/666666.png?text=Image+Load+Failed", use_container_width=use_container_width)
                 return
             
             # Handle base64 images
-            if isinstance(image_data, str) and image_data.startswith('data:image'):
+            if image_data.startswith('data:image'):
                 try:
                     # Extract the base64 part
-                    base64_data = image_data.split(',')[1]
+                    base64_part = image_data.split(',')[1]
                     # Decode the base64 string
-                    image_bytes = base64.b64decode(base64_data)
-                    # Create an image from the bytes
+                    image_bytes = base64.b64decode(base64_part)
+                    # Convert to image
                     image = Image.open(io.BytesIO(image_bytes))
-                    # Display the image
-                    st.image(image, use_column_width=use_column_width)
-                    return
-                except Exception as e:
-                    st.error(f"Failed to load base64 image: {str(e)}")
-                    st.image("https://placehold.co/300x400/e6e6e6/666666.png?text=Invalid+Base64", use_column_width=use_column_width)
-                    return
-
-            # Handle URL images
-            if isinstance(image_data, str) and image_data.startswith(('http://', 'https://')):
-                try:
-                    # Enhanced headers for image requests
-                    headers = {
-                        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
-                        "Accept": "image/webp,image/apng,image/*,*/*;q=0.8",
-                        "Accept-Encoding": "gzip, deflate, br",
-                        "Accept-Language": "en-US,en;q=0.9",
-                        "Connection": "keep-alive",
-                        "Cache-Control": "no-cache",
-                        "Pragma": "no-cache"
-                    }
-
-                    # Try to load the image with requests
-                    response = requests.get(image_data, headers=headers, timeout=10, verify=True)
-                    response.raise_for_status()
-
-                    # Verify content type is an image
-                    content_type = response.headers.get('content-type', '').lower()
-                    if 'image' not in content_type:
-                        raise ValueError(f"Invalid content type: {content_type}")
-
-                    # Convert to image bytes and display
-                    image_bytes = io.BytesIO(response.content)
-                    st.image(image_bytes, use_column_width=use_column_width)
-                    return
-                except Exception as e:
-                    # If the first attempt fails, try direct loading
-                    try:
-                        st.image(image_data, use_column_width=use_column_width)
-                        return
-                    except:
-                        st.error(f"Failed to load URL image: {str(e)}")
-                        st.image("https://placehold.co/300x400/e6e6e6/666666.png?text=Image+Load+Failed", use_column_width=use_column_width)
-                        return
-
-            # Invalid image format
-            st.image("https://placehold.co/300x400/e6e6e6/666666.png?text=Invalid+Image", use_column_width=use_column_width)
+                    st.image(image, use_container_width=use_container_width)
+                except:
+                    st.image("https://placehold.co/300x400/e6e6e6/666666.png?text=Invalid+Base64", use_container_width=use_container_width)
+                return
+            
+            # Handle file path images
+            try:
+                image = Image.open(image_data)
+                st.image(image, use_container_width=use_container_width)
+            except:
+                st.image("https://placehold.co/300x400/e6e6e6/666666.png?text=Image+Load+Failed", use_container_width=use_container_width)
             
         except Exception as e:
-            st.error(f"Error displaying image: {str(e)}")
-            st.image("https://placehold.co/300x400/e6e6e6/666666.png?text=Image+Error", use_column_width=use_column_width)
+            st.image("https://placehold.co/300x400/e6e6e6/666666.png?text=Image+Error", use_container_width=use_container_width)
 
     @staticmethod
     def display_grid(cards: List[Card], on_click=None):
@@ -277,7 +253,7 @@ class CardDisplay:
                     image_url = getattr(card, 'photo', '')
                 
                 # Use the CardDisplay.display_image method for consistent image handling
-                CardDisplay.display_image(image_url, use_column_width=True)
+                CardDisplay.display_image(image_url, use_container_width=True)
                 
                 # Display card details
                 st.markdown('<div class="card-grid-content">', unsafe_allow_html=True)
@@ -306,7 +282,13 @@ class CardDisplay:
                 
                 # Display condition and value
                 st.markdown(f'<p>Condition: {condition}</p>', unsafe_allow_html=True)
-                st.markdown(f'<p class="value">Value: ${current_value:,.2f}</p>', unsafe_allow_html=True)
+                
+                # Safely format the value
+                try:
+                    value = float(current_value) if current_value else 0
+                    st.markdown(f'<p class="value">Value: ${value:,.2f}</p>', unsafe_allow_html=True)
+                except (ValueError, TypeError):
+                    st.markdown(f'<p class="value">Value: ${current_value}</p>', unsafe_allow_html=True)
                 
                 # Add edit button if on_click is provided
                 if on_click is not None:
@@ -349,3 +331,48 @@ class CardDisplay:
             hide_index=True,
             use_container_width=True
         ) 
+
+def display_image(image_data: str, use_container_width=True):
+    """Display an image from various sources (URL, base64, or file path)"""
+    try:
+        if not image_data:
+            st.image("https://placehold.co/300x400/e6e6e6/666666.png?text=No+Image", use_container_width=use_container_width)
+            return
+            
+        # Handle URL images
+        if image_data.startswith('http'):
+            try:
+                response = requests.get(image_data, timeout=5)
+                if response.status_code == 200:
+                    image = Image.open(io.BytesIO(response.content))
+                    st.image(image, use_container_width=use_container_width)
+                else:
+                    st.image("https://placehold.co/300x400/e6e6e6/666666.png?text=Image+Not+Available", use_container_width=use_container_width)
+            except:
+                st.image("https://placehold.co/300x400/e6e6e6/666666.png?text=Image+Not+Available", use_container_width=use_container_width)
+            return
+            
+        # Handle base64 images
+        if image_data.startswith('data:image'):
+            try:
+                base64_part = image_data.split(',')[1]
+                image_bytes = base64.b64decode(base64_part)
+                image = Image.open(io.BytesIO(image_bytes))
+                st.image(image, use_container_width=use_container_width)
+            except:
+                st.image("https://placehold.co/300x400/e6e6e6/666666.png?text=Invalid+Base64", use_container_width=use_container_width)
+            return
+            
+        # Handle file path images
+        try:
+            image = Image.open(image_data)
+            st.image(image, use_container_width=use_container_width)
+        except:
+            st.image("https://placehold.co/300x400/e6e6e6/666666.png?text=Image+Load+Failed", use_container_width=use_container_width)
+            
+    except Exception as e:
+        st.image("https://placehold.co/300x400/e6e6e6/666666.png?text=Image+Error", use_container_width=use_container_width)
+
+def display_dataframe(df, use_container_width=True):
+    """Display a dataframe with proper formatting"""
+    st.dataframe(df, use_container_width=use_container_width, hide_index=True) 

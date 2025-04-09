@@ -1,3 +1,4 @@
+import streamlit as st
 from modules.ui.theme.theme_config import ThemeConfig
 
 class BrandingComponent:

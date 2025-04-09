@@ -17,12 +17,13 @@ class DisplayCaseManager:
     def load_display_cases(self, force_refresh: bool = False) -> Dict:
         """Load display cases from Firebase and refresh card data from current collection"""
         try:
-            # Always refresh collection data from Firebase
+            # Always get fresh collection data from Firebase
             new_collection = DatabaseService.get_user_collection(self.uid)
             
-            # Check if collection has changed by comparing tags
+            # Check if we need to refresh
             collection_changed = force_refresh or self.last_refresh_time is None
             
+            # Compare collections if not forcing refresh
             if not collection_changed and isinstance(self.collection, pd.DataFrame) and isinstance(new_collection, pd.DataFrame):
                 # Compare tags between old and new collection
                 old_tags = set()
@@ -51,28 +52,56 @@ class DisplayCaseManager:
                     print("Collection has changed, refreshing display cases")
                     print(f"Old tags: {old_tags}")
                     print(f"New tags: {new_tags}")
+            elif not collection_changed and isinstance(self.collection, list) and isinstance(new_collection, list):
+                # Compare tags between old and new collection for list format
+                old_tags = set()
+                new_tags = set()
+                
+                # Get tags from old collection
+                for card in self.collection:
+                    card_dict = card.to_dict() if hasattr(card, 'to_dict') else card
+                    tags = card_dict.get('tags', [])
+                    if isinstance(tags, str):
+                        old_tags.update(tag.strip() for tag in tags.split(','))
+                    elif isinstance(tags, list):
+                        old_tags.update(str(tag).strip() for tag in tags)
+                
+                # Get tags from new collection
+                for card in new_collection:
+                    card_dict = card.to_dict() if hasattr(card, 'to_dict') else card
+                    tags = card_dict.get('tags', [])
+                    if isinstance(tags, str):
+                        new_tags.update(tag.strip() for tag in tags.split(','))
+                    elif isinstance(tags, list):
+                        new_tags.update(str(tag).strip() for tag in tags)
+                
+                # Check if tags have changed
+                collection_changed = old_tags != new_tags
+                
+                if collection_changed:
+                    print("Collection has changed, refreshing display cases")
+                    print(f"Old tags: {old_tags}")
+                    print(f"New tags: {new_tags}")
             
-            if collection_changed:
-                self.collection = new_collection
-                self.last_refresh_time = datetime.now()
-                
-                # Load fresh display cases from Firebase
-                self.display_cases = DatabaseService.get_user_display_cases(self.uid)
-                
-                # If no display cases exist, initialize with empty dict
-                if not self.display_cases:
-                    self.display_cases = {}
-                    return self.display_cases
-                
-                # Refresh card data for each display case
-                for case_name, display_case in self.display_cases.items():
-                    filtered_cards = self._filter_cards_by_tags(display_case['tags'])
-                    display_case['cards'] = filtered_cards
-                    display_case['total_value'] = sum(card.get('current_value', 0) for card in filtered_cards)
-                    print(f"Refreshed display case '{case_name}' with {len(filtered_cards)} cards")
-                
-                # Save the updated display cases
-                self.save_display_cases()
+            # Update collection and refresh time
+            self.collection = new_collection
+            self.last_refresh_time = datetime.now()
+            
+            # Load fresh display cases from Firebase
+            loaded_cases = DatabaseService.get_user_display_cases(self.uid)
+            
+            # Ensure display_cases is always a dictionary
+            self.display_cases = loaded_cases if isinstance(loaded_cases, dict) else {}
+            
+            # Refresh card data for each display case
+            for case_name, display_case in self.display_cases.items():
+                filtered_cards = self._filter_cards_by_tags(display_case['tags'])
+                display_case['cards'] = filtered_cards
+                display_case['total_value'] = sum(card.get('current_value', 0) for card in filtered_cards)
+                print(f"Refreshed display case '{case_name}' with {len(filtered_cards)} cards")
+            
+            # Save the updated display cases
+            self.save_display_cases()
             
             return self.display_cases
             
@@ -80,7 +109,9 @@ class DisplayCaseManager:
             print(f"Error loading display cases: {str(e)}")
             import traceback
             print(f"Traceback: {traceback.format_exc()}")
-            return {}
+            # Ensure we always return a dictionary
+            self.display_cases = {}
+            return self.display_cases
             
     def _normalize_tags(self, tags) -> List[str]:
         """Normalize tags to a consistent format with support for hierarchical tags"""

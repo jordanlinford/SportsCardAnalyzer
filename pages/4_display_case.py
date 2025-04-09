@@ -112,13 +112,13 @@ def display_case_grid(display_case):
                                         # Create an image from the bytes
                                         image = Image.open(io.BytesIO(image_data))
                                         # Display the image
-                                        st.image(image, use_column_width=True)
+                                        st.image(image, use_container_width=True)
                                     except Exception as e:
                                         st.error(f"Failed to load base64 image: {str(e)}")
                                 # Check if the photo is a URL
                                 elif isinstance(photo, str) and (photo.startswith('http://') or photo.startswith('https://')):
                                     # Display the image from URL
-                                    st.image(photo, use_column_width=True)
+                                    st.image(photo, use_container_width=True)
                                 else:
                                     st.warning("Invalid image format")
                         except Exception as e:
@@ -291,7 +291,7 @@ def create_display_case_form():
                             try:
                                 # Display card image if available
                                 if card.get('photo'):
-                                    st.image(card['photo'], use_column_width=True)
+                                    st.image(card['photo'], use_container_width=True)
                                 
                                 # Display card details
                                 st.markdown(f"""
@@ -364,24 +364,24 @@ def display_card(card):
                 if card['photo'].startswith('data:image'):
                     # Handle base64 images
                     try:
-                        st.image(card['photo'], use_column_width=True)
+                        st.image(card['photo'], use_container_width=True)
                     except Exception as e:
                         st.error(f"Error displaying image: {str(e)}")
-                        st.image("https://via.placeholder.com/300x400?text=Image+Error", use_column_width=True)
+                        st.image("https://via.placeholder.com/300x400?text=Image+Error", use_container_width=True)
                 elif card['photo'].startswith('http'):
                     # Handle URL images
                     try:
                         response = requests.head(card['photo'], timeout=5)
                         if response.status_code == 200:
-                            st.image(card['photo'], use_column_width=True)
+                            st.image(card['photo'], use_container_width=True)
                         else:
-                            st.image("https://via.placeholder.com/300x400?text=Image+Not+Available", use_column_width=True)
+                            st.image("https://via.placeholder.com/300x400?text=Image+Not+Available", use_container_width=True)
                     except:
-                        st.image("https://via.placeholder.com/300x400?text=Image+Not+Available", use_column_width=True)
+                        st.image("https://via.placeholder.com/300x400?text=Image+Not+Available", use_container_width=True)
                 else:
-                    st.image("https://via.placeholder.com/300x400?text=No+Image", use_column_width=True)
+                    st.image("https://via.placeholder.com/300x400?text=No+Image", use_container_width=True)
             else:
-                st.image("https://via.placeholder.com/300x400?text=No+Image", use_column_width=True)
+                st.image("https://via.placeholder.com/300x400?text=No+Image", use_container_width=True)
         
         with col2:
             # Display card details
@@ -402,12 +402,12 @@ def display_card(card):
             # Add action buttons
             col1, col2 = st.columns(2)
             with col1:
-                if st.button("Edit Card", use_column_width=True):
+                if st.button("Edit Card", use_container_width=True):
                     st.session_state.editing_card = card
                     st.session_state.current_tab = "View Collection"
                     st.rerun()
             with col2:
-                if st.button("Remove from Display", use_column_width=True):
+                if st.button("Remove from Display", use_container_width=True):
                     remove_card_from_display(card)
                     st.rerun()
     

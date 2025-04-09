@@ -1,5 +1,6 @@
 """Theme manager for the Sports Card Analyzer app."""
 import os
+import streamlit as st
 from .theme_config import STREAMLIT_THEME, CUSTOM_CSS, LOGO_PATH, LOGO_WIDTH, LOGO_HEIGHT
 
 class ThemeManager:
@@ -29,7 +30,7 @@ class ThemeManager:
                 LOGO_PATH,
                 width=LOGO_WIDTH,
                 caption=None,
-                use_column_width=False
+                use_container_width=False
             )
         else:
             st.markdown(
