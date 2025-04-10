@@ -1,3 +1,8 @@
+# Development Dependencies
+pytest==8.2.1
+black==24.3.0
+python-dotenv==1.0.1
+
 altair==5.5.0
 attrs==25.3.0
 beautifulsoup4==4.13.3
@@ -55,7 +60,6 @@ pyparsing==3.2.3
 pyperclip==1.9.0
 Pyrebase4==4.8.0
 python-dateutil==2.9.0.post0
-python-dotenv==1.0.1
 python-jwt==4.1.0
 pytz==2025.2
 referencing==0.36.2
