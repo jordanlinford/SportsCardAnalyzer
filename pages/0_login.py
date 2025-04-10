@@ -1,4 +1,12 @@
 import streamlit as st
+
+# Set page config - must be first Streamlit command
+st.set_page_config(
+    page_title="Login - Sports Card Analyzer Pro",
+    page_icon="🏈",
+    layout="centered"
+)
+
 from modules.core.firebase_manager import FirebaseManager
 from modules.ui.theme.theme_manager import ThemeManager
 from modules.ui.branding import BrandingComponent
@@ -8,13 +16,17 @@ import json
 import webbrowser
 import time
 import threading
+import streamlit_cookies_manager
 
-# Set page config
-st.set_page_config(
-    page_title="Login - Sports Card Analyzer Pro",
-    page_icon="🏈",
-    layout="centered"
-)
+# Initialize debug mode in session state first
+if 'debug_mode' not in st.session_state:
+    st.session_state.debug_mode = False
+
+# Add debug mode toggle in sidebar immediately
+st.sidebar.checkbox("Debug Mode (Prevent Auto Login)", 
+                   value=st.session_state.debug_mode,
+                   key='debug_mode',
+                   on_change=lambda: st.rerun())
 
 # Apply theme and branding styles
 ThemeManager.apply_theme_styles()
@@ -94,9 +106,6 @@ def handle_auth_error(e):
         return f"An error occurred: {str(e)}"
 
 def main():
-    # Display logo at the top
-    BrandingComponent.display_vertical_logo()
-    
     # Initialize session state variables
     if 'user' not in st.session_state:
         st.session_state.user = None
@@ -108,16 +117,63 @@ def main():
         st.session_state.is_new_user = False
     if 'auth_window' not in st.session_state:
         st.session_state.auth_window = None
+    if 'cookies_checked' not in st.session_state:
+        st.session_state.cookies_checked = False
     
-    # Check if user is already logged in
+    # Initialize cookies manager
+    cookies = streamlit_cookies_manager.CookieManager()
+    
+    # Display logo at the top
+    BrandingComponent.display_vertical_logo()
+    
+    # Add clear cookies button in sidebar
+    if st.sidebar.button("Clear Cookies"):
+        if cookies.ready():
+            del cookies['user']
+            del cookies['uid']
+            cookies.save()
+        st.session_state.user = None
+        st.session_state.preferences = None
+        st.session_state.uid = None
+        st.session_state.is_new_user = False
+        st.session_state.cookies_checked = False
+        st.rerun()
+    
+    # Handle logout if requested
+    if st.session_state.user and st.sidebar.button("Logout"):
+        st.session_state.user = None
+        st.session_state.preferences = None
+        st.session_state.uid = None
+        st.session_state.is_new_user = False
+        st.session_state.cookies_checked = False
+        if cookies.ready():
+            del cookies['user']
+            del cookies['uid']
+            cookies.save()
+        st.rerun()
+    
+    # Check if user is already logged in (either through session state or cookies)
+    if not st.session_state.user and not st.session_state.cookies_checked and cookies.ready():
+        try:
+            user_cookie = cookies.get('user')
+            uid_cookie = cookies.get('uid')
+            if user_cookie and uid_cookie:
+                # Restore session from cookies
+                st.session_state.user = json.loads(user_cookie)
+                st.session_state.uid = uid_cookie
+                st.session_state.preferences = load_user_preferences(st.session_state.uid)
+        except Exception as e:
+            print(f"[Cookies] Restore error: {str(e)}")
+            if cookies.ready():
+                cookies['user'] = ''
+                cookies['uid'] = ''
+                cookies.save()
+        finally:
+            st.session_state.cookies_checked = True
+    
+    # If user is logged in, show welcome message
     if st.session_state.user:
         st.success(f"Welcome back, {st.session_state.user['displayName']}!")
-        if st.button("Logout"):
-            st.session_state.user = None
-            st.session_state.preferences = None
-            st.session_state.uid = None
-            st.session_state.is_new_user = False
-            st.rerun()
         return
     
     # Initialize Firebase
@@ -136,9 +192,16 @@ def main():
             try:
                 user = FirebaseManager.sign_in(email, password)
                 st.session_state.user = user
-                st.session_state.uid = user.get('localId')  # Use get() to safely access the field
+                st.session_state.uid = user.get('localId')
                 st.session_state.preferences = load_user_preferences(st.session_state.uid)
                 st.session_state.is_new_user = False
+                
+                # Save to cookies
+                if cookies.ready():
+                    cookies['user'] = json.dumps(user)
+                    cookies['uid'] = st.session_state.uid
+                    cookies.save()
+                
                 st.success("Login successful!")
                 st.rerun()
             except Exception as e:
@@ -154,9 +217,16 @@ def main():
             try:
                 user = FirebaseManager.sign_up(email, password, display_name)
                 st.session_state.user = user
-                st.session_state.uid = user.get('localId')  # Use get() to safely access the field
+                st.session_state.uid = user.get('localId')
                 st.session_state.preferences = load_user_preferences(st.session_state.uid)
                 st.session_state.is_new_user = True
+                
+                # Save to cookies
+                if cookies.ready():
+                    cookies['user'] = json.dumps(user)
+                    cookies['uid'] = st.session_state.uid
+                    cookies.save()
+                
                 st.success("Account created successfully!")
                 st.rerun()
             except Exception as e:
@@ -169,9 +239,16 @@ def main():
         try:
             user = FirebaseManager.sign_in_with_google()
             st.session_state.user = user
-            st.session_state.uid = user.get('localId')  # Use get() to safely access the field
+            st.session_state.uid = user.get('localId')
             st.session_state.preferences = load_user_preferences(st.session_state.uid)
             st.session_state.is_new_user = True
+            
+            # Save to cookies
+            if cookies.ready():
+                cookies['user'] = json.dumps(user)
+                cookies['uid'] = st.session_state.uid
+                cookies.save()
+            
             st.success("Google sign-in successful!")
             st.rerun()
         except Exception as e:

@@ -6,6 +6,8 @@ from ..firebase.config import db
 import pandas as pd
 import base64
 import ast
+import io
+from PIL import Image
 
 class DatabaseService:
     _instance = None
@@ -102,8 +104,6 @@ class DatabaseService:
                                             print(f"Warning: Photo data too large for card {card.get('player_name', 'Unknown')}")
                                             # Try to compress the image
                                             try:
-                                                import io
-                                                from PIL import Image
                                                 # Decode base64 to image
                                                 img_data = base64.b64decode(base64_part)
                                                 img = Image.open(io.BytesIO(img_data))
@@ -167,8 +167,6 @@ class DatabaseService:
                                             print(f"Warning: Photo data too large for card {card.player_name}")
                                             # Try to compress the image
                                             try:
-                                                import io
-                                                from PIL import Image
                                                 # Decode base64 to image
                                                 img_data = base64.b64decode(base64_part)
                                                 img = Image.open(io.BytesIO(img_data))
@@ -507,4 +505,36 @@ class DatabaseService:
             print(f"[ERROR] Failed to save display cases: {str(e)}")
             import traceback
             print(f"Traceback: {traceback.format_exc()}")
-            return False 
+            return False
+
+    def process_card_photo(self, card):
+        """Process and compress card photo if needed."""
+        photo = card.get('photo', '')
+        if not (photo.startswith('data:image') or photo.startswith('http')):
+            return "https://placehold.co/300x400/e6e6e6/666666.png?text=No+Card+Image"
+        
+        if photo.startswith('data:image'):
+            try:
+                # Extract base64 data
+                img_data = base64.b64decode(photo.split(',')[1])
+                
+                # Process image with PIL
+                img = Image.open(io.BytesIO(img_data))
+                
+                # Calculate new size maintaining aspect ratio
+                max_size = (800, 800)
+                img.thumbnail(max_size, Image.LANCZOS)
+                
+                # Convert to JPEG and compress
+                buffer = io.BytesIO()
+                img.save(buffer, format='JPEG', quality=85)
+                
+                # Convert back to base64
+                encoded_image = base64.b64encode(buffer.getvalue()).decode()
+                return f"data:image/jpeg;base64,{encoded_image}"
+            except Exception as e:
+                # Only log the error, don't show warning to user
+                print(f"Image processing note: {str(e)}")
+                return photo  # Return original photo if processing fails
+        
+        return photo 

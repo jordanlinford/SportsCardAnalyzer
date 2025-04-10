@@ -438,14 +438,23 @@ def display_market_analysis(card_data, market_data):
     # Sort by date in ascending order for proper trend display
     df = df.sort_values('date', ascending=True)
     
-    # Display the sales log
-    display_sales_log(df)
+    # Calculate price statistics with outlier removal
+    def remove_outliers(series):
+        Q1 = series.quantile(0.25)
+        Q3 = series.quantile(0.75)
+        IQR = Q3 - Q1
+        lower_bound = Q1 - 1.5 * IQR
+        upper_bound = Q3 + 1.5 * IQR
+        return series[(series >= lower_bound) & (series <= upper_bound)]
     
-    # Calculate metrics
-    median_price = df['price'].median()
+    # Remove outliers from price data
+    clean_prices = remove_outliers(df['price'])
+    
+    # Calculate metrics with cleaned data
+    median_price = clean_prices.median()
     last_7_sales = df.tail(7)  # Get last 7 sales since we're sorted ascending
-    avg_sell_price = last_7_sales['price'].mean()
-    price_std = df['price'].std()
+    avg_sell_price = clean_prices.mean()
+    price_std = clean_prices.std()
     volatility_score = min((price_std / avg_sell_price) * 10, 10)
     
     # Calculate market health score
@@ -473,8 +482,8 @@ def display_market_analysis(card_data, market_data):
         'metrics': {
             'avg_price': avg_sell_price,
             'median_price': median_price,
-            'low_price': df['price'].min(),
-            'high_price': df['price'].max(),
+            'low_price': clean_prices.min(),
+            'high_price': clean_prices.max(),
             'liquidity_score': market_health_score,
             'volatility_score': volatility_score,
             'volume_score': min(sales_volume / 30 * 10, 10)
@@ -517,6 +526,30 @@ def display_market_analysis(card_data, market_data):
         else:
             return "#F44336"  # Red for weak scores
     
+    # First row - Price Statistics
+    st.markdown("#### Price Statistics")
+    price_col1, price_col2, price_col3 = st.columns(3)
+    with price_col1:
+        st.metric(
+            "Average Sale Price",
+            f"${avg_sell_price:.2f}",
+            help="The typical selling price based on recent sales (outliers removed)"
+        )
+    with price_col2:
+        st.metric(
+            "Highest Sale Price",
+            f"${clean_prices.max():.2f}",
+            help="The highest price this card has sold for (outliers removed)"
+        )
+    with price_col3:
+        st.metric(
+            "Lowest Sale Price",
+            f"${clean_prices.min():.2f}",
+            help="The lowest price this card has sold for (outliers removed)"
+        )
+    
+    # Second row - Market Scores
+    st.markdown("#### Market Scores")
     col1, col2, col3, col4 = st.columns(4)
     with col1:
         st.markdown(f"""
@@ -567,8 +600,21 @@ def display_market_analysis(card_data, market_data):
         st.metric(
             "Average Sell Price",
             f"${avg_sell_price:.2f}",
-            help="The typical selling price based on recent sales. Use this to gauge if you're getting a good deal."
+            help="The typical selling price based on recent sales (outliers removed). Use this to gauge if you're getting a good deal."
         )
+    
+    # Display outlier information
+    st.markdown("#### Data Quality")
+    total_sales = len(df)
+    outlier_count = len(df) - len(clean_prices)
+    outlier_percentage = (outlier_count / total_sales * 100) if total_sales > 0 else 0
+    
+    st.info(f"""
+    **Data Quality Note:**
+    - Total sales analyzed: {total_sales}
+    - Outliers removed: {outlier_count} ({outlier_percentage:.1f}%)
+    - Price statistics shown above exclude outliers to provide more accurate market insights
+    """)
     
     if df is not None and not df.empty:
         # Display historical price trend

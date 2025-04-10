@@ -689,19 +689,29 @@ def save_collection_to_firebase(collection):
         st.write("Debug: Error traceback:", traceback.format_exc())
         return False
 
-def display_collection_grid(filtered_collection, is_shared=False):
-    """Display collection in a responsive grid layout"""
-    if not has_cards(filtered_collection):
-        st.info("No cards to display")
+def display_collection_grid(filtered_collection):
+    """Display the collection in a grid format with edit functionality."""
+    # Check if collection is empty
+    if filtered_collection is None or (isinstance(filtered_collection, pd.DataFrame) and filtered_collection.empty) or (isinstance(filtered_collection, list) and len(filtered_collection) == 0):
+        st.info("No cards found matching your filters.")
         return
+        
+    # Convert to list of dictionaries if it's a DataFrame
+    if isinstance(filtered_collection, pd.DataFrame):
+        filtered_collection = filtered_collection.to_dict('records')
     
-    # Use CardDisplay.display_grid with a callback for editing
-    CardDisplay.display_grid(filtered_collection, on_click=lambda idx: None if is_shared else (
-        setattr(st.session_state, 'editing_card', idx),
-        setattr(st.session_state, 'editing_data', filtered_collection[idx]),
-        setattr(st.session_state, 'current_tab', "View Collection"),
-        st.rerun()
-    ))
+    # Create a list of card indices for reference
+    card_indices = list(range(len(filtered_collection)))
+    
+    # Display grid with proper index handling
+    CardDisplay.display_grid(
+        filtered_collection,
+        on_click=lambda idx: (
+            setattr(st.session_state, 'editing_card', idx),
+            setattr(st.session_state, 'editing_data', filtered_collection[idx]),
+            st.rerun()
+        )
+    )
 
 def display_collection_table(filtered_collection):
     """Display collection in a table format."""
