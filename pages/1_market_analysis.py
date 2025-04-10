@@ -764,9 +764,21 @@ def display_market_analysis(card_data, market_data):
             
             # Display profit calculator with the selected card data
             if selected_card_data:
+                # Determine if card is graded from title
+                title = selected_card_data.get('title', '').lower()
+                is_graded = any(grade in title for grade in ['psa', 'bgs', 'sgc'])
+                
                 # Add condition if missing
                 if 'condition' not in selected_card_data:
-                    selected_card_data['condition'] = 'raw'
+                    if is_graded:
+                        # Extract grade from title
+                        grade_match = re.search(r'(psa|bgs|sgc)\s*(\d+)', title)
+                        if grade_match:
+                            selected_card_data['condition'] = f"{grade_match.group(1).upper()} {grade_match.group(2)}"
+                        else:
+                            selected_card_data['condition'] = 'graded'
+                    else:
+                        selected_card_data['condition'] = 'raw'
                 
                 CardDisplay.display_profit_calculator(selected_card_data, market_data)
             
@@ -1284,16 +1296,6 @@ def main():
     
     # Initialize session state
     init_session_state()
-    
-    # Add backup button in the top right
-    col1, col2, col3 = st.columns([2, 1, 1])
-    with col3:
-        if st.button("Backup Collection", use_container_width=True):
-            success, result = export_collection_backup()
-            if success:
-                st.success(f"Collection backup created successfully!\nSaved to: {result}")
-            else:
-                st.error(f"Failed to create backup: {result}")
     
     # Add billing section
     with ThemeManager.styled_card():

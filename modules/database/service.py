@@ -234,12 +234,20 @@ class DatabaseService:
             
             try:
                 if user_doc.exists:
+                    # Get existing collection
+                    existing_collection = user_doc.to_dict().get('collection', [])
+                    if not isinstance(existing_collection, list):
+                        existing_collection = []
+                    
+                    # Merge with new collection
+                    updated_collection = existing_collection + collection_data
+                    
                     # Update existing collection
                     db.collection('users').document(uid).update({
-                        'collection': collection_data,
+                        'collection': updated_collection,
                         'updated_at': datetime.now().isoformat()
                     })
-                    print(f"Successfully updated collection with {len(collection_data)} cards")
+                    print(f"Successfully updated collection with {len(updated_collection)} cards")
                     return True
                 else:
                     # Create new collection

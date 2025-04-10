@@ -265,8 +265,24 @@ def display_add_card_form():
                 if isinstance(st.session_state.collection, pd.DataFrame):
                     st.session_state.collection = st.session_state.collection.to_dict('records')
                 
-                # Add new card
-                st.session_state.collection = st.session_state.collection + [new_card]
+                # Create a function to check if a card already exists
+                def card_exists(card, existing_cards):
+                    for existing_card in existing_cards:
+                        if (card.get('player_name') == existing_card.get('player_name') and
+                            card.get('year') == existing_card.get('year') and
+                            card.get('card_set') == existing_card.get('card_set') and
+                            card.get('card_number') == existing_card.get('card_number')):
+                            return True
+                    return False
+                
+                # Filter out duplicates
+                new_cards = [card for card in [new_card] if not card_exists(card, st.session_state.collection)]
+                
+                if len(new_cards) < 1:
+                    st.warning("Skipped 0 duplicate cards.")
+                
+                # Append only new cards to existing collection
+                st.session_state.collection = st.session_state.collection + new_cards
                 
                 # Save to Firebase
                 if save_collection_to_firebase(st.session_state.collection):
@@ -802,16 +818,17 @@ def display_collection():
 
 def generate_sample_template():
     """Generate a sample Excel template for collection upload"""
-    # Create sample data
+    # Create sample data with correct column names
     sample_data = {
-        'Player Name': ['Michael Jordan', 'LeBron James'],
-        'Year': ['1986', '2003'],
-        'Card Set': ['Fleer', 'Topps Chrome'],
-        'Variation': ['Base', 'Refractor'],
-        'Condition': ['PSA 9', 'PSA 10'],
-        'Date Purchased': ['2023-01-15', ''],  # Optional
-        'Purchase Amount': [150.00, ''],  # Optional
-        'Notes': ['Rookie Card', '']  # Optional
+        'player_name': ['Michael Jordan', 'LeBron James'],
+        'year': ['1986', '2003'],
+        'card_set': ['Fleer', 'Topps Chrome'],
+        'card_number': ['57', '123'],
+        'variation': ['Base', 'Refractor'],
+        'condition': ['PSA 9', 'PSA 10'],
+        'purchase_date': ['2023-01-15', ''],  # Optional
+        'purchase_price': [150.00, ''],  # Optional
+        'notes': ['Rookie Card', '']  # Optional
     }
     
     # Create DataFrame
@@ -841,16 +858,17 @@ def generate_sample_template():
         # Add instructions
         instructions = [
             "Required Fields:",
-            "- Player Name: Full name of the player",
-            "- Year: Year the card was produced (e.g., 1986)",
-            "- Card Set: Name of the set (e.g., Topps, Panini Prizm)",
-            "- Variation: Type of card (e.g., Base, Refractor, Prizm)",
-            "- Condition: Card condition (e.g., PSA 9, Raw)",
+            "- player_name: Full name of the player",
+            "- year: Year the card was produced (e.g., 1986)",
+            "- card_set: Name of the set (e.g., Topps, Panini Prizm)",
+            "- card_number: The card number in the set",
+            "- variation: Type of card (e.g., Base, Refractor, Prizm)",
+            "- condition: Card condition (e.g., PSA 9, Raw)",
+            "- purchase_price: How much you paid for the card",
+            "- purchase_date: When you bought the card (YYYY-MM-DD)",
             "",
             "Optional Fields:",
-            "- Date Purchased: When you bought the card (YYYY-MM-DD)",
-            "- Purchase Amount: How much you paid for the card",
-            "- Notes: Any additional information about the card",
+            "- notes: Any additional information about the card",
             "",
             "Notes:",
             "- Leave optional fields blank if not applicable",
@@ -1087,15 +1105,173 @@ def main():
                 try:
                     # Import collection
                     if uploaded_file.name.endswith('.csv'):
-                        imported_df = pd.read_csv(uploaded_file)
-                    else:
-                        imported_df = pd.read_excel(uploaded_file)
+                        st.write("Reading CSV file...")
+                        try:
+                            # Check if file is empty
+                            if uploaded_file.size == 0:
+                                st.error("The uploaded file is empty")
+                                return
+                            
+                            # First, read the raw content to see what we're dealing with
+                            uploaded_file.seek(0)
+                            raw_content = uploaded_file.read().decode('utf-8')
+                            st.write("Raw file content:")
+                            st.code(raw_content)
+                            
+                            # Try reading with different encodings and delimiters
+                            encodings = ['utf-8', 'latin1', 'iso-8859-1']
+                            delimiters = [',', ';', '\t']
+                            
+                            for encoding in encodings:
+                                for delimiter in delimiters:
+                                    try:
+                                        # Reset file pointer
+                                        uploaded_file.seek(0)
+                                        # Skip the first line and read with headers
+                                        imported_df = pd.read_csv(
+                                            uploaded_file,
+                                            encoding=encoding,
+                                            delimiter=delimiter,
+                                            on_bad_lines='skip',
+                                            engine='python',
+                                            skiprows=1  # Skip the first line
+                                        )
+                                        
+                                        st.write(f"Tried encoding: {encoding}, delimiter: {delimiter}")
+                                        st.write("Columns found:", imported_df.columns.tolist())
+                                        st.write("Number of rows:", len(imported_df))
+                                        st.write("First few rows of data:")
+                                        st.write(imported_df.head())
+                                        
+                                        # If we got data, break out of both loops
+                                        if not imported_df.empty:
+                                            break
+                                    except Exception as e:
+                                        st.write(f"Error with encoding {encoding} and delimiter {delimiter}: {str(e)}")
+                                        continue
+                                if not imported_df.empty:
+                                    break
+                            
+                            # If we still have no data or only one column, try reading without headers
+                            if imported_df.empty or len(imported_df.columns) == 1:
+                                st.write("Trying to read without headers...")
+                                # Reset file pointer
+                                uploaded_file.seek(0)
+                                
+                                # Try reading with different delimiters
+                                for delimiter in delimiters:
+                                    try:
+                                        # Reset file pointer
+                                        uploaded_file.seek(0)
+                                        # Skip the first line and read without headers
+                                        imported_df = pd.read_csv(
+                                            uploaded_file,
+                                            header=None,
+                                            encoding=encoding,
+                                            delimiter=delimiter,
+                                            on_bad_lines='skip',
+                                            engine='python',
+                                            skiprows=1  # Skip the first line
+                                        )
+                                        
+                                        st.write(f"Tried reading without headers using delimiter: {delimiter}")
+                                        st.write("Raw data preview:")
+                                        st.write(imported_df)
+                                        
+                                        # If we have more than one column, use the first row as headers
+                                        if len(imported_df.columns) > 1:
+                                            st.write("Multiple columns detected, using first row as headers")
+                                            # Convert all column names to strings and strip whitespace
+                                            imported_df.columns = [str(col).strip() for col in imported_df.iloc[0]]
+                                            imported_df = imported_df[1:]
+                                            break
+                                        # If we have only one column but more than one row, try to split the data
+                                        elif len(imported_df) > 1:
+                                            st.write("Single column detected, attempting to split data")
+                                            # Try to split the first row to determine the number of columns
+                                            first_row = imported_df.iloc[0, 0]
+                                            if isinstance(first_row, str):
+                                                split_row = first_row.split(delimiter)
+                                                if len(split_row) > 1:
+                                                    st.write(f"Detected {len(split_row)} columns in first row")
+                                                    # Create new columns based on the split
+                                                    split_df = imported_df[0].str.split(delimiter, expand=True)
+                                                    # Use the first row as column names
+                                                    split_df.columns = [str(col).strip() for col in split_df.iloc[0]]
+                                                    split_df = split_df[1:]
+                                                    imported_df = split_df
+                                                    break
+                                    
+                                    except Exception as e:
+                                        st.write(f"Error reading without headers using delimiter {delimiter}: {str(e)}")
+                                        continue
+                                
+                                # Clean up any empty rows
+                                imported_df = imported_df.dropna(how='all')
+                                
+                                st.write("Data after processing:")
+                                st.write(imported_df)
+                                
+                                # Check if we still have data after processing
+                                if len(imported_df) == 0:
+                                    st.error("No valid data found in the CSV file after processing")
+                                    return
+                                    
+                        except pd.errors.EmptyDataError:
+                            st.error("The CSV file appears to be empty or not properly formatted")
+                            return
+                        except Exception as e:
+                            st.error(f"Error reading CSV file: {str(e)}")
+                            st.write("Please check that your CSV file is properly formatted with column headers")
+                            st.write("Supported formats:")
+                            st.write("- Comma-separated (CSV)")
+                            st.write("- Tab-separated (TSV)")
+                            st.write("- Semicolon-separated")
+                            return
+                    
+                    st.write("Original columns:", imported_df.columns.tolist())
+                    
+                    # Create column mapping dictionary
+                    column_mapping = {
+                        'player name': 'player_name',
+                        'player': 'player_name',
+                        'name': 'player_name',
+                        'year': 'year',
+                        'card set': 'card_set',
+                        'set': 'card_set',
+                        'card number': 'card_number',
+                        'number': 'card_number',
+                        'variation': 'variation',
+                        'condition': 'condition',
+                        'purchase price': 'purchase_price',
+                        'price': 'purchase_price',
+                        'purchase amount': 'purchase_price',
+                        'amount': 'purchase_price',
+                        'date purchased': 'purchase_date',
+                        'purchase date': 'purchase_date',
+                        'date': 'purchase_date',
+                        'current value': 'current_value',
+                        'value': 'current_value',
+                        'last updated': 'last_updated',
+                        'notes': 'notes',
+                        'photo': 'photo',
+                        'roi': 'roi',
+                        'tags': 'tags'
+                    }
+                    
+                    # Normalize column names (lowercase and remove spaces)
+                    imported_df.columns = [str(col).lower().strip() for col in imported_df.columns]
+                    st.write("Normalized columns:", imported_df.columns.tolist())
+                    
+                    # Map column names to standard format
+                    for old_col, new_col in column_mapping.items():
+                        if old_col in imported_df.columns and old_col != new_col:
+                            imported_df.rename(columns={old_col: new_col}, inplace=True)
+                    
+                    st.write("Mapped columns:", imported_df.columns.tolist())
                     
                     # Validate and process import
-                    required_cols = [
-                        'player_name', 'year', 'card_set', 'card_number',
-                        'variation', 'condition', 'purchase_price', 'purchase_date'
-                    ]
+                    required_cols = ['player_name']  # Only player_name is required
                     
                     missing_cols = [
                         col for col in required_cols
@@ -1103,32 +1279,74 @@ def main():
                     ]
                     
                     if missing_cols:
-                        st.error(f"Missing required columns: {', '.join(missing_cols)}")
+                        st.error(f"Missing required column: {', '.join(missing_cols)}")
+                        st.info("Available columns in your file: " + ", ".join(imported_df.columns))
                     else:
-                        # Add missing optional columns
-                        if 'current_value' not in imported_df.columns:
-                            imported_df['current_value'] = imported_df['purchase_price']
-                        if 'last_updated' not in imported_df.columns:
-                            imported_df['last_updated'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-                        if 'notes' not in imported_df.columns:
-                            imported_df['notes'] = ''
-                        if 'photo' not in imported_df.columns:
-                            imported_df['photo'] = None
-                        if 'roi' not in imported_df.columns:
-                            imported_df['roi'] = 0.0
-                        if 'tags' not in imported_df.columns:
-                            imported_df['tags'] = ''
+                        st.write("Adding missing columns with default values...")
+                        # Add missing columns with default values
+                        optional_cols = {
+                            'year': '',
+                            'card_set': '',
+                            'card_number': '',
+                            'variation': '',
+                            'condition': 'Raw',
+                            'purchase_price': 0.0,
+                            'purchase_date': datetime.now().strftime('%Y-%m-%d'),
+                            'current_value': 0.0,
+                            'last_updated': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                            'notes': '',
+                            'photo': None,
+                            'roi': 0.0,
+                            'tags': ''
+                        }
+                        
+                        # Add any missing optional columns with default values
+                        for col, default_value in optional_cols.items():
+                            if col not in imported_df.columns:
+                                imported_df[col] = default_value
+                        
+                        st.write("Final columns:", imported_df.columns.tolist())
+                        st.write("Sample data:", imported_df.head().to_dict('records'))
                         
                         # Convert DataFrame to list of dictionaries
                         imported_collection = imported_df.to_dict('records')
                         
+                        # Get existing collection
+                        existing_collection = st.session_state.collection
+                        if not isinstance(existing_collection, list):
+                            existing_collection = []
+                        
+                        # Create a function to check if a card already exists
+                        def card_exists(card, existing_cards):
+                            for existing_card in existing_cards:
+                                if (card.get('player_name') == existing_card.get('player_name') and
+                                    card.get('year') == existing_card.get('year') and
+                                    card.get('card_set') == existing_card.get('card_set') and
+                                    card.get('card_number') == existing_card.get('card_number')):
+                                    return True
+                            return False
+                        
+                        # Filter out duplicates
+                        new_cards = [card for card in imported_collection 
+                                   if not card_exists(card, existing_collection)]
+                        
+                        if len(new_cards) < len(imported_collection):
+                            st.warning(f"Skipped {len(imported_collection) - len(new_cards)} duplicate cards.")
+                        
+                        # Append only new cards to existing collection
+                        updated_collection = existing_collection + new_cards
+                        
                         # Update collection
-                        st.session_state.collection = imported_collection
+                        st.session_state.collection = updated_collection
                         
                         # Save to Firebase
-                        if save_collection_to_firebase(imported_collection):
-                            st.success(f"Successfully imported {len(imported_collection)} cards!")
+                        st.write("Saving to Firebase...")
+                        if save_collection_to_firebase(updated_collection):
+                            st.success(f"Successfully imported {len(new_cards)} new cards!")
                             st.balloons()
+                            # Force refresh the collection from Firebase
+                            st.session_state.collection = load_collection_from_firebase()
+                            st.rerun()  # Force a rerun to update the UI
                         else:
                             st.error("Failed to save imported collection to database. Please try again.")
                 

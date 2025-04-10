@@ -123,8 +123,8 @@ class DisplayCaseManager:
             print(f"Input tags: {tags}")
             print(f"Input tags type: {type(tags)}")
             
-            if pd.isna(tags) or tags is None:
-                print("Tags are None or NaN")
+            if tags is None or (isinstance(tags, (list, pd.Series)) and len(tags) == 0):
+                print("Tags are None or empty")
                 return []
                 
             if isinstance(tags, str):
@@ -192,58 +192,34 @@ class DisplayCaseManager:
             print(f"Card tags: {card_tags_normalized}")
             print(f"Filter tags: {filter_tags_normalized}")
             
-            # If either set is empty, return False
-            if not card_tags_normalized or not filter_tags_normalized:
-                print("One or both tag sets are empty")
+            # If filter tags are empty, return True (show all cards)
+            if not filter_tags_normalized:
+                print("No filter tags specified, showing all cards")
+                return True
+            
+            # If card has no tags but filter tags exist, return False
+            if not card_tags_normalized:
+                print("Card has no tags but filter tags exist")
                 return False
             
             # Convert to sets for case-insensitive comparison
-            card_tags_set = {tag.lower() for tag in card_tags_normalized}
-            filter_tags_set = {tag.lower() for tag in filter_tags_normalized}
+            card_tags_set = set(card_tags_normalized)
+            filter_tags_set = set(filter_tags_normalized)
             
-            print(f"Card tags set: {card_tags_set}")
-            print(f"Filter tags set: {filter_tags_set}")
+            # Check for exclusions first
+            exclusion_tags = {tag[8:] for tag in filter_tags_set if tag.startswith('exclude:')}
+            if exclusion_tags and any(tag in card_tags_set for tag in exclusion_tags):
+                print(f"Card excluded by tags: {exclusion_tags}")
+                return False
             
-            # Handle exclusions
-            exclude_tags = {tag[8:] for tag in filter_tags_set if tag.startswith('exclude:')}
-            if exclude_tags:
-                print(f"Exclude tags: {exclude_tags}")
-                if any(tag in card_tags_set for tag in exclude_tags):
-                    print(f"Card has excluded tag: {exclude_tags}")
-                    return False
+            # Remove exclusion tags from filter set
+            filter_tags_set = {tag for tag in filter_tags_set if not tag.startswith('exclude:')}
             
-            # Handle hierarchical tags
-            for filter_tag in filter_tags_set:
-                if filter_tag.startswith('exclude:'):
-                    continue
-                    
-                print(f"\nChecking filter tag: {filter_tag}")
-                if ':' in filter_tag:
-                    category, value = filter_tag.split(':', 1)
-                    print(f"Category: {category}, Value: {value}")
-                    # Check if card has any tag in this category
-                    category_tags = [tag for tag in card_tags_set if tag.startswith(f"{category}:")]
-                    print(f"Card's tags in category: {category_tags}")
-                    if not category_tags:
-                        print(f"Card missing category {category}")
-                        return False
-                    # Check if any tag in the category matches the value
-                    if not any(tag.split(':', 1)[1] == value for tag in category_tags):
-                        print(f"Card missing value {value} in category {category}")
-                        return False
-                else:
-                    # Handle list tags
-                    if isinstance(card_tags, list):
-                        if not any(tag.lower() == filter_tag for tag in card_tags):
-                            print(f"Card missing tag {filter_tag}")
-                            return False
-                    else:
-                        if filter_tag not in card_tags_set:
-                            print(f"Card missing tag {filter_tag}")
-                            return False
+            # Check if any filter tag matches any card tag
+            matches = any(tag in card_tags_set for tag in filter_tags_set)
+            print(f"Tag match result: {matches}")
+            return matches
             
-            print("All tags match")
-            return True
         except Exception as e:
             print(f"Error in _has_matching_tags: {str(e)}")
             import traceback
