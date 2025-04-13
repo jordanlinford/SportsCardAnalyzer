@@ -11,6 +11,7 @@ from modules.core.grading_analyzer import GradingAnalyzer
 from PIL import Image
 import base64
 from io import BytesIO
+from modules.ui.indicators import TrendIndicator
 
 class CardDisplay:
     @staticmethod
@@ -246,22 +247,9 @@ class CardDisplay:
         )
         
         # Generate market status
-        if sentiment >= 7.5:
-            market_status = "🟢 Very Strong"
-            market_summary = "The market shows exceptional strength with positive trends across multiple indicators."
-        elif sentiment >= 6:
-            market_status = "🟡 Strong"
-            market_summary = "The market demonstrates solid performance with good fundamentals."
-        elif sentiment >= 4.5:
-            market_status = "🟡 Stable"
-            market_summary = "The market appears stable with balanced supply and demand."
-        else:
-            market_status = "🔴 Cautious"
-            market_summary = "The market shows some uncertainty and may require careful consideration."
-        
-        # Display market overview
-        st.markdown(f"#### Market Status: {market_status}")
-        st.markdown(market_summary)
+        market_status = TrendIndicator.get_market_status(sentiment)
+        st.markdown(f"#### Market Status: {market_status['status']}")
+        st.markdown(market_status['summary'])
         
         # Display detailed analysis
         st.markdown("#### Key Insights")
@@ -269,27 +257,27 @@ class CardDisplay:
         
         # Trend Analysis
         if scores['trend_score'] >= 7:
-            insights.append("📈 Strong upward price trend")
+            insights.append("UP: Strong upward price trend")
         elif scores['trend_score'] <= 3:
-            insights.append("📉 Significant price decline")
+            insights.append("DOWN: Significant price decline")
         
         # Momentum Analysis
         if scores['momentum_score'] >= 7:
-            insights.append("🚀 High positive momentum")
+            insights.append("MOMENTUM: High positive momentum")
         elif scores['momentum_score'] <= 3:
-            insights.append("🔻 Negative price momentum")
+            insights.append("MOMENTUM: Negative price momentum")
         
         # Volume Analysis
         if scores['volume_score'] >= 7:
-            insights.append("📊 High trading volume")
+            insights.append("VOLUME: High trading volume")
         elif scores['volume_score'] <= 3:
-            insights.append("📊 Low trading volume")
+            insights.append("VOLUME: Low trading volume")
         
         # Stability Analysis
         if scores['stability_score'] >= 7:
-            insights.append("🎯 High price stability")
+            insights.append("STABILITY: High price stability")
         elif scores['stability_score'] <= 3:
-            insights.append("🎯 High price volatility")
+            insights.append("STABILITY: High price volatility")
         
         for insight in insights:
             st.markdown(f"- {insight}")
@@ -429,27 +417,27 @@ class CardDisplay:
         
         # Trend Analysis
         if scores['trend_score'] >= 7:
-            insights.append("📈 Strong upward price trend")
+            insights.append("UP: Strong upward price trend")
         elif scores['trend_score'] <= 3:
-            insights.append("📉 Significant price decline")
+            insights.append("DOWN: Significant price decline")
         
         # Momentum Analysis
         if scores['momentum_score'] >= 7:
-            insights.append("🚀 High positive momentum")
+            insights.append("MOMENTUM: High positive momentum")
         elif scores['momentum_score'] <= 3:
-            insights.append("🔻 Negative price momentum")
+            insights.append("MOMENTUM: Negative price momentum")
         
         # Volume Analysis
         if scores['volume_score'] >= 7:
-            insights.append("📊 High trading volume")
+            insights.append("VOLUME: High trading volume")
         elif scores['volume_score'] <= 3:
-            insights.append("📊 Low trading volume")
+            insights.append("VOLUME: Low trading volume")
         
         # Stability Analysis
         if scores['stability_score'] >= 7:
-            insights.append("🎯 High price stability")
+            insights.append("STABILITY: High price stability")
         elif scores['stability_score'] <= 3:
-            insights.append("🎯 High price volatility")
+            insights.append("STABILITY: High price volatility")
         
         for insight in insights:
             st.markdown(f"- {insight}")
@@ -664,11 +652,11 @@ class CardDisplay:
             # Quick verdict
             st.markdown("#### Grading Recommendation")
             if psa10_profit > total_grading_cost * 2:
-                st.success("🟢 **GRADE IT!** - High profit potential at PSA 10")
+                st.success("GRADE IT - High profit potential at PSA 10")
             elif psa9_profit > total_grading_cost:
-                st.info("🔵 **Consider Grading** - Profitable at PSA 9")
+                st.info("CONSIDER GRADING - Profitable at PSA 9")
             else:
-                st.warning("🟡 **DON'T GRADE** - Grading costs exceed potential profit")
+                st.warning("DON'T GRADE - Grading costs exceed potential profit")
 
     @staticmethod
     def display_grid(collection: List[Dict], on_click: Optional[callable] = None):

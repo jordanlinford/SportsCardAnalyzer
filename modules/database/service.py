@@ -81,56 +81,17 @@ class DatabaseService:
     def save_user_collection(uid: str, cards: List[Card]) -> bool:
         """Save user's card collection to Firestore."""
         try:
+            # Get database service instance for photo processing
+            db_service = DatabaseService.get_instance()
+            
             # Convert all cards to a simple dict format that Firestore can handle
             collection_data = []
             for card in cards:
                 try:
                     # Handle both Card objects and dictionary records
                     if isinstance(card, dict):
-                        # Handle photo data
-                        photo = card.get('photo', '')
-                        if photo:
-                            try:
-                                # Accept both base64 and URL formats
-                                if not (photo.startswith('data:image') or photo.startswith('http')):
-                                    print(f"Warning: Invalid photo data format for card {card.get('player_name', 'Unknown')}")
-                                    photo = ''
-                                elif photo.startswith('data:image'):
-                                    # Validate base64 content
-                                    try:
-                                        base64_part = photo.split(',')[1]
-                                        # Check size before decoding - increased to 2MB
-                                        if len(base64_part) > 2 * 1024 * 1024:  # 2MB limit
-                                            print(f"Warning: Photo data too large for card {card.get('player_name', 'Unknown')}")
-                                            # Try to compress the image
-                                            try:
-                                                # Decode base64 to image
-                                                img_data = base64.b64decode(base64_part)
-                                                img = Image.open(io.BytesIO(img_data))
-                                                # Convert to RGB if necessary
-                                                if img.mode != 'RGB':
-                                                    img = img.convert('RGB')
-                                                # Calculate new size while maintaining aspect ratio
-                                                ratio = min(800/img.size[0], 1000/img.size[1])
-                                                new_size = (int(img.size[0]*ratio), int(img.size[1]*ratio))
-                                                img = img.resize(new_size, Image.LANCZOS)
-                                                # Save with compression
-                                                buffer = io.BytesIO()
-                                                img.save(buffer, format='JPEG', quality=85, optimize=True)
-                                                # Convert back to base64
-                                                photo = f"data:image/jpeg;base64,{base64.b64encode(buffer.getvalue()).decode()}"
-                                            except Exception as compress_error:
-                                                print(f"Warning: Failed to compress image for card {card.get('player_name', 'Unknown')}. Error: {str(compress_error)}")
-                                                photo = ''
-                                        else:
-                                            # Validate the base64 content
-                                            base64.b64decode(base64_part)
-                                    except Exception as e:
-                                        print(f"Warning: Invalid base64 image data for card {card.get('player_name', 'Unknown')}. Error: {str(e)}")
-                                        photo = ''
-                            except Exception as e:
-                                print(f"Warning: Error validating photo data for card {card.get('player_name', 'Unknown')}. Error: {str(e)}")
-                                photo = ''
+                        # Process photo data
+                        photo = db_service.process_card_photo(card.get('photo', ''))
                         
                         # Convert dictionary record to proper format
                         card_dict = {
@@ -150,50 +111,8 @@ class DatabaseService:
                             'tags': [str(tag) for tag in card.get('tags', [])]
                         }
                     else:
-                        # Handle photo data for Card object
-                        photo = card.photo
-                        if photo:
-                            try:
-                                # Accept both base64 and URL formats
-                                if not (photo.startswith('data:image') or photo.startswith('http')):
-                                    print(f"Warning: Invalid photo data format for card {card.player_name}")
-                                    photo = ''
-                                elif photo.startswith('data:image'):
-                                    # Validate base64 content
-                                    try:
-                                        base64_part = photo.split(',')[1]
-                                        # Check size before decoding - increased to 2MB
-                                        if len(base64_part) > 2 * 1024 * 1024:  # 2MB limit
-                                            print(f"Warning: Photo data too large for card {card.player_name}")
-                                            # Try to compress the image
-                                            try:
-                                                # Decode base64 to image
-                                                img_data = base64.b64decode(base64_part)
-                                                img = Image.open(io.BytesIO(img_data))
-                                                # Convert to RGB if necessary
-                                                if img.mode != 'RGB':
-                                                    img = img.convert('RGB')
-                                                # Calculate new size while maintaining aspect ratio
-                                                ratio = min(800/img.size[0], 1000/img.size[1])
-                                                new_size = (int(img.size[0]*ratio), int(img.size[1]*ratio))
-                                                img = img.resize(new_size, Image.LANCZOS)
-                                                # Save with compression
-                                                buffer = io.BytesIO()
-                                                img.save(buffer, format='JPEG', quality=85, optimize=True)
-                                                # Convert back to base64
-                                                photo = f"data:image/jpeg;base64,{base64.b64encode(buffer.getvalue()).decode()}"
-                                            except Exception as compress_error:
-                                                print(f"Warning: Failed to compress image for card {card.player_name}. Error: {str(compress_error)}")
-                                                photo = ''
-                                        else:
-                                            # Validate the base64 content
-                                            base64.b64decode(base64_part)
-                                    except Exception as e:
-                                        print(f"Warning: Invalid base64 image data for card {card.player_name}. Error: {str(e)}")
-                                        photo = ''
-                            except Exception as e:
-                                print(f"Warning: Error validating photo data for card {card.player_name}. Error: {str(e)}")
-                                photo = ''
+                        # Process photo data for Card object
+                        photo = db_service.process_card_photo(card.photo if hasattr(card, 'photo') else '')
                         
                         # Convert Card object to dict
                         card_dict = {
@@ -213,11 +132,6 @@ class DatabaseService:
                             'tags': [str(tag) for tag in card.tags]
                         }
                     
-                    # Check total document size before adding
-                    doc_size = len(str(card_dict).encode('utf-8')) / 1024  # Size in KB
-                    if doc_size > 900:  # Warning if approaching 1MB limit
-                        print(f"Warning: Card document for {card_dict['player_name']} is {doc_size:.1f}KB. Consider reducing size.")
-                    
                     collection_data.append(card_dict)
                 except Exception as card_error:
                     print(f"Error processing card: {str(card_error)}")
@@ -229,29 +143,22 @@ class DatabaseService:
                 print("No valid cards to save")
                 return False
 
-            # Get current collection
-            user_doc = db.collection('users').document(uid).get()
+            # Save to Firestore
+            user_ref = db.collection('users').document(uid)
+            user_doc = user_ref.get()
             
             try:
                 if user_doc.exists:
-                    # Get existing collection
-                    existing_collection = user_doc.to_dict().get('collection', [])
-                    if not isinstance(existing_collection, list):
-                        existing_collection = []
-                    
-                    # Merge with new collection
-                    updated_collection = existing_collection + collection_data
-                    
                     # Update existing collection
-                    db.collection('users').document(uid).update({
-                        'collection': updated_collection,
+                    user_ref.update({
+                        'collection': collection_data,
                         'updated_at': datetime.now().isoformat()
                     })
-                    print(f"Successfully updated collection with {len(updated_collection)} cards")
+                    print(f"Successfully updated collection with {len(collection_data)} cards")
                     return True
                 else:
                     # Create new collection
-                    db.collection('users').document(uid).set({
+                    user_ref.set({
                         'collection': collection_data,
                         'created_at': datetime.now().isoformat(),
                         'updated_at': datetime.now().isoformat()
@@ -259,10 +166,11 @@ class DatabaseService:
                     print(f"Successfully created new collection with {len(collection_data)} cards")
                     return True
             except Exception as e:
-                print(f"Error saving collection to Firestore: {str(e)}")
+                print(f"Error saving to Firestore: {str(e)}")
                 import traceback
                 print(f"Traceback: {traceback.format_exc()}")
                 return False
+                
         except Exception as e:
             print(f"Error in save_user_collection: {str(e)}")
             import traceback
@@ -471,78 +379,104 @@ class DatabaseService:
     def save_display_cases(uid: str, display_cases: Dict) -> bool:
         """Save display cases to Firestore."""
         try:
-            # Validate and prepare display cases data
-            validated_cases = {}
+            # Process display cases to ensure they're serializable
+            processed_cases = {}
             for name, case in display_cases.items():
-                # Ensure all cards have valid photo data
-                valid_cards = []
-                for card in case.get('cards', []):
-                    if 'photo' in card and card['photo']:
-                        # Convert photo to string if needed
-                        if not isinstance(card['photo'], str):
-                            card['photo'] = str(card['photo'])
-                        valid_cards.append(card)
-                    else:
-                        print(f"[DEBUG] Skipping card {card.get('player_name', 'Unknown')} in display case {name} - no valid photo")
+                processed_case = {
+                    'name': str(case.get('name', '')),
+                    'description': str(case.get('description', '')),
+                    'tags': [str(tag) for tag in case.get('tags', [])],
+                    'created_date': str(case.get('created_date', datetime.now().isoformat())),
+                    'total_value': float(case.get('total_value', 0.0)),
+                    'cards': []
+                }
                 
-                # Only include display cases with valid cards
-                if valid_cards:
-                    validated_cases[name] = {
-                        'name': str(case.get('name', '')),
-                        'description': str(case.get('description', '')),
-                        'tags': [str(tag) for tag in case.get('tags', [])],
-                        'cards': valid_cards,
-                        'total_value': float(case.get('total_value', 0.0)),
-                        'created_date': str(case.get('created_date', datetime.now().isoformat()))
-                    }
-
-            if not validated_cases:
-                print("[ERROR] No valid display cases to save")
-                return False
-
+                # Process cards
+                for card in case.get('cards', []):
+                    processed_card = {}
+                    for key, value in card.items():
+                        if isinstance(value, (str, int, float, bool, list, dict, type(None))):
+                            processed_card[key] = value
+                        else:
+                            processed_card[key] = str(value)
+                    processed_case['cards'].append(processed_card)
+                
+                processed_cases[name] = processed_case
+            
             # Save to Firestore
             db.collection('users').document(uid).update({
-                'display_cases': validated_cases,
+                'display_cases': processed_cases,
                 'updated_at': datetime.now().isoformat()
             })
             
-            print(f"[DEBUG] Successfully saved {len(validated_cases)} display cases")
             return True
             
         except Exception as e:
-            print(f"[ERROR] Failed to save display cases: {str(e)}")
+            print(f"Error saving display cases: {str(e)}")
             import traceback
             print(f"Traceback: {traceback.format_exc()}")
             return False
 
-    def process_card_photo(self, card):
+    def process_card_photo(self, photo_data: str) -> str:
         """Process and compress card photo if needed."""
-        photo = card.get('photo', '')
-        if not (photo.startswith('data:image') or photo.startswith('http')):
-            return "https://placehold.co/300x400/e6e6e6/666666.png?text=No+Card+Image"
-        
-        if photo.startswith('data:image'):
-            try:
-                # Extract base64 data
-                img_data = base64.b64decode(photo.split(',')[1])
-                
-                # Process image with PIL
-                img = Image.open(io.BytesIO(img_data))
-                
-                # Calculate new size maintaining aspect ratio
-                max_size = (800, 800)
-                img.thumbnail(max_size, Image.LANCZOS)
-                
-                # Convert to JPEG and compress
-                buffer = io.BytesIO()
-                img.save(buffer, format='JPEG', quality=85)
-                
-                # Convert back to base64
-                encoded_image = base64.b64encode(buffer.getvalue()).decode()
-                return f"data:image/jpeg;base64,{encoded_image}"
-            except Exception as e:
-                # Only log the error, don't show warning to user
-                print(f"Image processing note: {str(e)}")
-                return photo  # Return original photo if processing fails
-        
-        return photo 
+        try:
+            if not photo_data:
+                return "https://placehold.co/300x400/e6e6e6/666666.png?text=No+Card+Image"
+            
+            if not (photo_data.startswith('data:image') or photo_data.startswith('http')):
+                return "https://placehold.co/300x400/e6e6e6/666666.png?text=No+Card+Image"
+            
+            # If it's a URL, return as is
+            if photo_data.startswith('http'):
+                return photo_data
+            
+            # Process base64 image
+            if photo_data.startswith('data:image'):
+                try:
+                    # Extract base64 data
+                    base64_part = photo_data.split(',')[1]
+                    img_data = base64.b64decode(base64_part)
+                    
+                    # Process image with PIL
+                    img = Image.open(io.BytesIO(img_data))
+                    
+                    # Convert to RGB if necessary
+                    if img.mode != 'RGB':
+                        img = img.convert('RGB')
+                    
+                    # Calculate new size maintaining aspect ratio
+                    max_width = 800
+                    max_height = 1000
+                    ratio = min(max_width/img.size[0], max_height/img.size[1])
+                    new_size = (int(img.size[0]*ratio), int(img.size[1]*ratio))
+                    img = img.resize(new_size, Image.LANCZOS)
+                    
+                    # Save with compression
+                    buffer = io.BytesIO()
+                    img.save(buffer, format='JPEG', quality=85, optimize=True)
+                    compressed_data = buffer.getvalue()
+                    
+                    # Check final size
+                    if len(compressed_data) > 1024 * 1024:  # If still over 1MB
+                        # Try more aggressive compression
+                        buffer = io.BytesIO()
+                        img.save(buffer, format='JPEG', quality=60, optimize=True)
+                        compressed_data = buffer.getvalue()
+                        
+                        if len(compressed_data) > 1024 * 1024:
+                            print(f"Warning: Image still too large after compression ({len(compressed_data)/1024:.1f}KB)")
+                            return "https://placehold.co/300x400/e6e6e6/666666.png?text=Image+Too+Large"
+                    
+                    # Convert back to base64
+                    encoded_image = base64.b64encode(compressed_data).decode()
+                    return f"data:image/jpeg;base64,{encoded_image}"
+                    
+                except Exception as e:
+                    print(f"Error processing image: {str(e)}")
+                    return "https://placehold.co/300x400/e6e6e6/666666.png?text=Image+Processing+Error"
+            
+            return "https://placehold.co/300x400/e6e6e6/666666.png?text=Invalid+Image+Format"
+            
+        except Exception as e:
+            print(f"Error in process_card_photo: {str(e)}")
+            return "https://placehold.co/300x400/e6e6e6/666666.png?text=Error+Processing+Image" 

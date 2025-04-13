@@ -1,0 +1,28 @@
+# Core Dependencies
+streamlit==1.44.1
+pandas==2.2.3
+numpy==2.2.4
+plotly==6.0.1
+altair==5.5.0
+
+# Firebase
+firebase-admin==6.7.0
+Pyrebase4==4.8.0
+
+# Data Processing
+beautifulsoup4==4.13.3
+requests==2.32.3
+python-dateutil==2.9.0.post0
+
+# Image Processing
+pillow==11.1.0
+
+# Utilities
+python-dotenv==1.0.1
+pyarrow==19.0.1
+XlsxWriter==3.2.2
+
+# Development Tools (Optional)
+black==24.3.0
+flake8==7.0.0
+pytest==8.2.1 

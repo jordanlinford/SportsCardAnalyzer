@@ -1,7 +1,91 @@
 import streamlit as st
-from modules.ui.theme.theme_manager import ThemeManager
+import pandas as pd
+import numpy as np
+from datetime import datetime
+import os
+import sys
+import json
+from pathlib import Path
+from modules.firebase.user_management import UserManager
 from modules.core.firebase_manager import FirebaseManager
 from modules.ui.components import CardDisplay
+from modules.ui.theme.theme_manager import ThemeManager
+from modules.ui.branding import BrandingComponent
+
+# Add the project root directory to the Python path
+project_root = str(Path(__file__).parent.parent)
+if project_root not in sys.path:
+    sys.path.append(project_root)
+
+# Set page config must be the first Streamlit command
+st.set_page_config(
+    page_title="Profile Management",
+    page_icon="person",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
+
+# Apply theme styles
+ThemeManager.apply_theme_styles()
+
+# Initialize session state variables
+if 'user' not in st.session_state:
+    st.session_state.user = None
+if 'uid' not in st.session_state:
+    st.session_state.uid = None
+
+# Display branding
+BrandingComponent.display_vertical_logo()
+
+# Add custom CSS for persistent branding
+st.markdown("""
+    <style>
+        /* Header container */
+        .stApp > header {
+            background-color: white;
+            padding: 1rem;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        
+        /* Sidebar container */
+        .stSidebar {
+            background-color: white;
+            padding: 1rem;
+        }
+        
+        /* Logo container in header */
+        .stApp > header .logo-container {
+            margin: 0;
+            padding: 0;
+        }
+        
+        /* Logo container in sidebar */
+        .stSidebar .logo-container {
+            margin-bottom: 1rem;
+            padding: 0.5rem;
+            border-bottom: 1px solid rgba(0,0,0,0.1);
+        }
+        
+        /* Dark mode overrides */
+        @media (prefers-color-scheme: dark) {
+            .stApp > header {
+                background-color: #111111;
+            }
+            
+            .stSidebar {
+                background-color: #111111;
+            }
+            
+            .stSidebar .logo-container {
+                border-bottom-color: rgba(255,255,255,0.1);
+            }
+        }
+    </style>
+""", unsafe_allow_html=True)
+
+# Apply theme and branding styles
+ThemeManager.apply_theme_styles()
+BrandingComponent.add_branding_styles()
 
 def update_user_profile(uid, profile_data):
     """Update user profile in Firebase"""
@@ -13,13 +97,40 @@ def update_user_profile(uid, profile_data):
         return False, f"Error updating profile: {str(e)}"
 
 def main():
+    # Initialize session state for user if not exists
+    if 'user' not in st.session_state:
+        st.session_state.user = None
+    if 'uid' not in st.session_state:
+        st.session_state.uid = None
+    
+    # If user is not logged in, redirect to login page
+    if not st.session_state.user:
+        st.switch_page("pages/0_login.py")
+    
+    # Sidebar
+    with st.sidebar:
+        # Sidebar header with branding
+        st.markdown('<div class="logo-container">', unsafe_allow_html=True)
+        BrandingComponent.display_horizontal_logo()
+        st.markdown('</div>', unsafe_allow_html=True)
+        
+        # Navigation
+        st.page_link("app.py", label="Home", icon="🏠")
+        st.page_link("pages/1_market_analysis.py", label="Market Analysis", icon="📊")
+        st.page_link("pages/4_display_case.py", label="Display Case", icon="🖼️")
+        st.page_link("pages/3_collection_manager.py", label="Collection Manager", icon="📋")
+        st.page_link("pages/2_trade_analyzer.py", label="Trade Analyzer", icon="🔄")
+        st.page_link("pages/subscription_7.py", label="Subscription", icon="💎")
+        st.page_link("pages/6_profile_management.py", label="Profile", icon="👤")
+        
+        # Logout button
+        if st.button("Logout", type="primary"):
+            st.session_state.user = None
+            st.session_state.uid = None
+            st.rerun()
+    
     st.title("Profile Management")
     
-    if not st.session_state.user:
-        st.warning("Please log in to access your profile.")
-        st.switch_page("pages/0_login.py")
-        return
-
     # Get current user data
     user_data = st.session_state.user
     
@@ -143,13 +254,7 @@ def main():
     with ThemeManager.styled_card():
         st.subheader("Account Management")
         
-        st.warning(
-            """
-            ⚠️ **Important Account Actions**
-            
-            The following actions affect your account security and access. Please proceed with caution.
-            """
-        )
+        st.warning("WARNING: Important Account Actions")
         
         col1, col2 = st.columns(2)
         
@@ -171,7 +276,7 @@ def main():
     """
     with ThemeManager.styled_card():
         st.subheader("Billing")
-        st.info("💳 Billing management coming soon!")
+        st.info("Billing management coming soon!")
         
         # Placeholder for future billing features
         st.markdown('''

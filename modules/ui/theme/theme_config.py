@@ -33,9 +33,48 @@ STREAMLIT_THEME = {
 CUSTOM_CSS = """
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
 
+/* Theme variables */
+:root {
+    --primary-color: #000000;
+    --background-color: #FFFFFF;
+    --secondary-background-color: #F8FAFC;
+    --text-color: #111827;
+}
+
 /* Base styles */
 .stApp {
     font-family: 'Inter', sans-serif;
+}
+
+/* Mobile-friendly adjustments */
+@media (max-width: 640px) {
+    /* Make forms full width */
+    .stForm {
+        width: 100% !important;
+    }
+    
+    /* Adjust chart size */
+    .js-plotly-plot {
+        height: 300px !important;
+    }
+    
+    /* Stack metrics vertically */
+    [data-testid="stMetricValue"] {
+        font-size: 1.2rem !important;
+    }
+    
+    /* Adjust card display */
+    .card-image {
+        max-width: 200px !important;
+        margin: 0 auto !important;
+        display: block !important;
+    }
+    
+    /* Make price segments stack */
+    .price-segment {
+        width: 100% !important;
+        margin-bottom: 1rem !important;
+    }
 }
 
 /* Header styles */
@@ -47,8 +86,9 @@ h1, h2, h3, h4, h5, h6 {
 
 /* Sidebar styles */
 [data-testid="stSidebar"] {
-    background-color: #FFFFFF;
+    background-color: var(--background-color);
     border-right: 1px solid rgba(0,0,0,0.1);
+    padding: 1rem;
 }
 
 [data-testid="stSidebar"] [data-testid="stMarkdown"] {
@@ -63,14 +103,37 @@ h1, h2, h3, h4, h5, h6 {
     background: linear-gradient(to bottom, rgba(0,0,0,0.02), transparent);
 }
 
-/* Logo styles */
+/* Sidebar navigation styles */
+[data-testid="stSidebar"] .stPageLink {
+    padding: 0.5rem 1rem;
+    margin: 0.25rem 0;
+    border-radius: 4px;
+    transition: all 0.2s ease;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    color: var(--text-color);
+    text-decoration: none;
+}
+
+[data-testid="stSidebar"] .stPageLink:hover {
+    background-color: rgba(0,0,0,0.05);
+    color: var(--primary-color);
+}
+
+[data-testid="stSidebar"] .stPageLink.active {
+    background-color: var(--primary-color);
+    color: white;
+}
+
+/* Logo container styles */
 .logo-container {
-    padding: 1rem;
-    margin-bottom: 0.5rem;
     display: flex;
     align-items: center;
     justify-content: center;
-    gap: 12px;
+    width: 100%;
+    margin: 0;
+    padding: 1rem;
 }
 
 .logo-container.vertical {
@@ -82,19 +145,14 @@ h1, h2, h3, h4, h5, h6 {
     flex-direction: row;
 }
 
-.logo-container svg {
-    color: var(--text-color, #000000);
-    width: 48px !important;
-    height: 48px !important;
-}
-
+/* Logo text styles */
 .logo-text {
-    font-family: 'Inter', sans-serif;
-    font-size: 20px;
+    font-size: 2.5rem;
     font-weight: 700;
-    color: var(--text-color, #000000);
+    color: var(--text-color);
+    margin: 0;
     line-height: 1.2;
-    white-space: nowrap;
+    text-align: center;
 }
 
 /* Button styles */
@@ -123,6 +181,34 @@ h1, h2, h3, h4, h5, h6 {
 .card:hover {
     transform: translateY(-2px);
     box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+}
+
+/* Variation card styles */
+.variation-card {
+    border: 1px solid #ddd;
+    padding: 1rem;
+    border-radius: 8px;
+    margin-bottom: 1rem;
+}
+
+/* Grade card styles */
+.grade-card {
+    border: 1px solid #ddd;
+    padding: 1rem;
+    border-radius: 8px;
+    margin-bottom: 1rem;
+    background-color: #f8f9fa;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+}
+
+.grade-card h4 {
+    margin: 0 0 0.5rem 0;
+    color: #2c3e50;
+}
+
+.grade-card p {
+    margin: 0.25rem 0;
+    color: #34495e;
 }
 
 /* Input field styles */
@@ -162,12 +248,19 @@ h1, h2, h3, h4, h5, h6 {
 
 /* Dark mode overrides */
 @media (prefers-color-scheme: dark) {
+    :root {
+        --primary-color: #FFFFFF;
+        --background-color: #111111;
+        --secondary-background-color: #1a1a1a;
+        --text-color: #FFFFFF;
+    }
+
     .stApp {
-        background-color: #111111;
+        background-color: var(--background-color);
     }
 
     [data-testid="stSidebar"] {
-        background-color: #111111;
+        background-color: var(--background-color);
         border-right: 1px solid rgba(255,255,255,0.1);
     }
 
@@ -176,17 +269,44 @@ h1, h2, h3, h4, h5, h6 {
         background: linear-gradient(to bottom, rgba(255,255,255,0.02), transparent);
     }
 
+    [data-testid="stSidebar"] .stPageLink {
+        color: var(--text-color);
+    }
+
+    [data-testid="stSidebar"] .stPageLink:hover {
+        background-color: rgba(255,255,255,0.05);
+        color: var(--primary-color);
+    }
+
     .card {
-        background: #111111;
+        background: var(--background-color);
         border: 1px solid rgba(255,255,255,0.1);
     }
 
+    .variation-card {
+        border: 1px solid rgba(255,255,255,0.1);
+        background-color: var(--secondary-background-color);
+    }
+
+    .grade-card {
+        border: 1px solid rgba(255,255,255,0.1);
+        background-color: var(--secondary-background-color);
+    }
+
+    .grade-card h4 {
+        color: var(--text-color);
+    }
+
+    .grade-card p {
+        color: var(--text-color);
+    }
+
     .logo-container svg {
-        color: var(--text-color, #FFFFFF);
+        color: var(--text-color);
     }
     
     .logo-text {
-        color: var(--text-color, #FFFFFF);
+        color: var(--text-color);
     }
 
     .nav-item:hover {

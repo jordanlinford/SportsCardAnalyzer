@@ -17,6 +17,26 @@ from modules.database.service import DatabaseService
 import requests
 from modules.core.firebase_manager import FirebaseManager
 from modules.ui.components.CardDisplay import CardDisplay
+from modules.ui.branding import BrandingComponent
+from modules.ui.theme.theme_manager import ThemeManager
+import sys
+from modules.core.collection_manager import CollectionManager
+
+# Add the project root directory to the Python path
+project_root = str(Path(__file__).parent.parent)
+if project_root not in sys.path:
+    sys.path.append(project_root)
+
+# Set page config must be the first Streamlit command
+st.set_page_config(
+    page_title="Display Case",
+    page_icon="image",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
+
+# Apply theme styles
+ThemeManager.apply_theme_styles()
 
 # Initialize session state variables
 if 'user' not in st.session_state:
@@ -24,12 +44,55 @@ if 'user' not in st.session_state:
 if 'uid' not in st.session_state:
     st.session_state.uid = None
 
-st.set_page_config(
-    page_title="Display Case - Sports Card Analyzer Pro",
-    page_icon="",
-    layout="wide",
-    initial_sidebar_state="collapsed"
-)
+# Add custom CSS for persistent branding
+st.markdown("""
+    <style>
+        /* Header container */
+        .stApp > header {
+            background-color: white;
+            padding: 1rem;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        
+        /* Sidebar container */
+        .stSidebar {
+            background-color: white;
+            padding: 1rem;
+        }
+        
+        /* Logo container in header */
+        .stApp > header .logo-container {
+            margin: 0;
+            padding: 0;
+        }
+        
+        /* Logo container in sidebar */
+        .stSidebar .logo-container {
+            margin-bottom: 1rem;
+            padding: 0.5rem;
+            border-bottom: 1px solid rgba(0,0,0,0.1);
+        }
+        
+        /* Dark mode overrides */
+        @media (prefers-color-scheme: dark) {
+            .stApp > header {
+                background-color: #111111;
+            }
+            
+            .stSidebar {
+                background-color: #111111;
+            }
+            
+            .stSidebar .logo-container {
+                border-bottom-color: rgba(255,255,255,0.1);
+            }
+        }
+    </style>
+""", unsafe_allow_html=True)
+
+# Apply theme and branding styles
+ThemeManager.apply_theme_styles()
+BrandingComponent.add_branding_styles()
 
 def display_case_grid(display_case):
     """Display cards in a grid using the CardDisplay component"""
@@ -50,18 +113,38 @@ def create_new_display_case(display_case_manager, collection):
     
     # Get all unique tags from the collection
     all_tags = set()
-    for card in collection:
-        if isinstance(card, dict):
-            tags = card.get('tags', [])
-        else:
-            tags = card.tags if hasattr(card, 'tags') else []
-        
-        if isinstance(tags, str):
-            tags = [tag.strip() for tag in tags.split(',') if tag.strip()]
-        elif isinstance(tags, list):
-            tags = [str(tag).strip() for tag in tags if tag and str(tag).strip()]
-        
-        all_tags.update(tags)
+    if isinstance(collection, pd.DataFrame):
+        # Handle DataFrame collection
+        if 'tags' in collection.columns:
+            for tags in collection['tags'].dropna():
+                if isinstance(tags, str):
+                    try:
+                        parsed = ast.literal_eval(tags)
+                        if isinstance(parsed, list):
+                            all_tags.update(str(tag).strip().lower() for tag in parsed if tag)
+                        else:
+                            all_tags.update(tag.strip().lower() for tag in tags.split(',') if tag.strip())
+                    except:
+                        all_tags.update(tag.strip().lower() for tag in tags.split(',') if tag.strip())
+    else:
+        # Handle list collection
+        for card in collection:
+            if isinstance(card, dict):
+                tags = card.get('tags', [])
+            else:
+                tags = card.tags if hasattr(card, 'tags') else []
+            
+            if isinstance(tags, str):
+                try:
+                    parsed = ast.literal_eval(tags)
+                    if isinstance(parsed, list):
+                        all_tags.update(str(tag).strip().lower() for tag in parsed if tag)
+                    else:
+                        all_tags.update(tag.strip().lower() for tag in tags.split(',') if tag.strip())
+                except:
+                    all_tags.update(tag.strip().lower() for tag in tags.split(',') if tag.strip())
+            elif isinstance(tags, list):
+                all_tags.update(str(tag).strip().lower() for tag in tags if tag)
     
     # Create form for new display case
     with st.form("new_display_case"):
@@ -81,21 +164,48 @@ def create_new_display_case(display_case_manager, collection):
                 return
                 
             # Create the display case
-            new_case = display_case_manager.create_display_case(name, description, selected_tags)
-            if new_case:
+            success = display_case_manager.create_display_case(name, description, selected_tags)
+            if success:
                 st.success(f"Display case '{name}' created successfully!")
                 st.rerun()
             else:
                 st.error("Failed to create display case")
 
 def main():
-    """Main function to display the display case page"""
-    # Check if user is logged in
+    # Initialize session state for user if not exists
+    if 'user' not in st.session_state:
+        st.session_state.user = None
+    if 'uid' not in st.session_state:
+        st.session_state.uid = None
+    
+    # If user is not logged in, redirect to login page
     if not st.session_state.user:
-        st.warning("Please log in to view your display cases")
         st.switch_page("pages/0_login.py")
-        return
-
+    
+    # Sidebar
+    with st.sidebar:
+        # Sidebar header with branding
+        st.markdown('<div class="logo-container">', unsafe_allow_html=True)
+        BrandingComponent.display_horizontal_logo()
+        st.markdown('</div>', unsafe_allow_html=True)
+        
+        # Navigation
+        st.page_link("app.py", label="Home", icon="🏠")
+        st.page_link("pages/1_market_analysis.py", label="Market Analysis", icon="📊")
+        st.page_link("pages/4_display_case.py", label="Display Case", icon="🖼️")
+        st.page_link("pages/3_collection_manager.py", label="Collection Manager", icon="📋")
+        st.page_link("pages/2_trade_analyzer.py", label="Trade Analyzer", icon="🔄")
+        st.page_link("pages/subscription_7.py", label="Subscription", icon="💎")
+        st.page_link("pages/6_profile_management.py", label="Profile", icon="👤")
+        
+        # Logout button
+        if st.button("Logout", type="primary"):
+            st.session_state.user = None
+            st.session_state.uid = None
+            st.rerun()
+    
+    st.title("Display Case")
+    
     # Get user ID
     uid = st.session_state.uid
     if not uid:
@@ -119,24 +229,31 @@ def main():
         display_cases = display_case_manager.load_display_cases()
         if not display_cases:
             st.info("No display cases found. Create one to get started!")
-            return
+        else:
+            # Display case selection
+            case_names = list(display_cases.keys())
+            selected_case = st.selectbox("Select Display Case", case_names)
 
-        # Display case selection
-        case_names = list(display_cases.keys())
-        selected_case = st.selectbox("Select Display Case", case_names)
-
-        if selected_case:
-            # Get the selected display case
-            display_case = display_cases[selected_case]
-            
-            # Display case info
-            st.markdown(f"### {display_case['name']}")
-            st.markdown(f"**Description:** {display_case.get('description', 'No description')}")
-            st.markdown(f"**Total Value:** ${display_case.get('total_value', 0):,.2f}")
-            st.markdown(f"**Number of Cards:** {len(display_case.get('cards', []))}")
-            
-            # Display the grid
-            display_case_grid(display_case)
+            if selected_case:
+                # Get the selected display case
+                display_case = display_cases[selected_case]
+                
+                # Display case info
+                st.markdown(f"### {display_case['name']}")
+                st.markdown(f"**Description:** {display_case.get('description', 'No description')}")
+                st.markdown(f"**Total Value:** ${display_case.get('total_value', 0):,.2f}")
+                st.markdown(f"**Number of Cards:** {len(display_case.get('cards', []))}")
+                
+                # Add delete button
+                if st.button("Delete Display Case", type="secondary"):
+                    if display_case_manager.delete_display_case(selected_case):
+                        st.success(f"Display case '{selected_case}' deleted successfully!")
+                        st.rerun()
+                    else:
+                        st.error("Failed to delete display case")
+                
+                # Display the grid
+                display_case_grid(display_case)
     
     with tab2:
         create_new_display_case(display_case_manager, collection)

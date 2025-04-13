@@ -6,11 +6,14 @@ import logging
 from modules.core.firebase_manager import FirebaseManager
 from modules.ui.theme.theme_manager import ThemeManager
 from modules.ui.branding import BrandingComponent
+from modules.services.webhook_handler import WebhookHandler
+import json
+import os
 
 # ✅ Must be the first Streamlit command
 st.set_page_config(
-    page_title="Sports Card Analyzer Pro",
-    page_icon="🏈",
+    page_title="Sports Card Analyzer",
+    page_icon="football",
     layout="wide",
     initial_sidebar_state="expanded"
 )
@@ -82,6 +85,16 @@ def initialize_firebase():
         st.error(f"Error initializing Firebase: {str(e)}")
         return False
 
+def handle_webhook():
+    """Handle Stripe webhook events"""
+    payload = st.request.body
+    sig_header = st.request.headers.get('stripe-signature')
+    
+    handler = WebhookHandler()
+    result = handler.handle_event(payload, sig_header)
+    
+    return json.dumps(result)
+
 def main():
     # Initialize session state variables
     if 'user' not in st.session_state:
@@ -98,11 +111,6 @@ def main():
         st.switch_page("pages/0_login.py")
         return
     
-    # Header with branding
-    st.markdown('<div class="logo-container">', unsafe_allow_html=True)
-    BrandingComponent.display_horizontal_logo()
-    st.markdown('</div>', unsafe_allow_html=True)
-    
     # Sidebar
     with st.sidebar:
         # Sidebar header with branding
@@ -111,12 +119,12 @@ def main():
         st.markdown('</div>', unsafe_allow_html=True)
         
         # Navigation
-        st.page_link("app.py", label="Home", icon="🏠")
-        st.page_link("pages/1_market_analysis.py", label="Market Analysis", icon="📊")
-        st.page_link("pages/4_display_case.py", label="Display Case", icon="📸")
-        st.page_link("pages/3_collection_manager.py", label="Collection Manager", icon="📋")
-        st.page_link("pages/2_trade_analyzer.py", label="Trade Analyzer", icon="🔄")
-        st.page_link("pages/6_profile_management.py", label="Profile", icon="👤")
+        st.page_link("app.py", label="Home")
+        st.page_link("pages/1_market_analysis.py", label="Market Analysis")
+        st.page_link("pages/4_display_case.py", label="Display Case")
+        st.page_link("pages/3_collection_manager.py", label="Collection Manager")
+        st.page_link("pages/2_trade_analyzer.py", label="Trade Analyzer")
+        st.page_link("pages/6_profile_management.py", label="Profile")
         
         # Logout button
         if st.button("Logout", type="primary"):

@@ -20,6 +20,7 @@ from modules.database.service import DatabaseService
 from modules.database.models import Card, CardCondition
 from typing import List, Dict, Any, Union
 from modules.ui.theme.theme_manager import ThemeManager
+from modules.ui.branding import BrandingComponent
 
 def get_score_color(score):
     """Return color based on score value"""
@@ -516,16 +517,6 @@ def display_market_analysis(card_data, market_data):
     - What a fair price might be
     """)
     
-    # Define color coding for scores
-    def get_score_color(score):
-        """Return color based on score value"""
-        if score >= 8:
-            return "#4CAF50"  # Green for strong scores
-        elif score >= 6:
-            return "#FFC107"  # Yellow for moderate scores
-        else:
-            return "#F44336"  # Red for weak scores
-    
     # First row - Price Statistics
     st.markdown("#### Price Statistics")
     price_col1, price_col2, price_col3 = st.columns(3)
@@ -597,11 +588,19 @@ def display_market_analysis(card_data, market_data):
         """, unsafe_allow_html=True)
     
     with col4:
-        st.metric(
-            "Average Sell Price",
-            f"${avg_sell_price:.2f}",
-            help="The typical selling price based on recent sales (outliers removed). Use this to gauge if you're getting a good deal."
-        )
+        st.markdown(f"""
+        <div style='text-align: center;'>
+            <h3 style='color: {get_score_color(market_health_score)};'>{market_health_score:.1f}/10</h3>
+            <p>Liquidity Score</p>
+        </div>
+        """, unsafe_allow_html=True)
+        st.markdown("""
+        <div style='font-size: 0.8em;'>
+            <p style='color: #4CAF50;'>7-10: High trading volume</p>
+            <p style='color: #FFC107;'>5-7: Moderate trading volume</p>
+            <p style='color: #F44336;'>Below 5: Low trading volume</p>
+        </div>
+        """, unsafe_allow_html=True)
     
     # Display outlier information
     st.markdown("#### Data Quality")
@@ -1291,6 +1290,27 @@ def main():
         'market_trends': True,
         'collection_stats': True
     }
+    
+    # Sidebar
+    with st.sidebar:
+        # Sidebar header with branding
+        st.markdown('<div class="logo-container">', unsafe_allow_html=True)
+        BrandingComponent.display_horizontal_logo()
+        st.markdown('</div>', unsafe_allow_html=True)
+        
+        # Navigation
+        st.page_link("app.py", label="Home", icon="🏠")
+        st.page_link("pages/1_market_analysis.py", label="Market Analysis", icon="📊")
+        st.page_link("pages/4_display_case.py", label="Display Case", icon="📸")
+        st.page_link("pages/3_collection_manager.py", label="Collection Manager", icon="📋")
+        st.page_link("pages/2_trade_analyzer.py", label="Trade Analyzer", icon="🔄")
+        st.page_link("pages/6_profile_management.py", label="Profile", icon="👤")
+        
+        # Logout button
+        if st.button("Logout", type="primary"):
+            st.session_state.user = None
+            st.session_state.uid = None
+            st.rerun()
     
     st.title("Market Analysis")
     

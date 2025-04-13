@@ -1,16 +1,90 @@
 import streamlit as st
+import pandas as pd
+import numpy as np
+from datetime import datetime, timedelta
 from modules.analysis.trade_analyzer import TradeAnalyzer
 from modules.core.market_analysis import MarketAnalyzer
 from modules.core.price_predictor import PricePredictor
 from scrapers.ebay_interface import EbayInterface
 from modules.shared.collection_utils import add_to_collection
 from modules.ui.components import CardDisplay
+from modules.ui.branding import BrandingComponent
+from modules.ui.theme.theme_manager import ThemeManager
+from modules.firebase.user_management import UserManager
 import sys
 from pathlib import Path
+from modules.ui.indicators import TrendIndicator
 
 # Add the project root directory to Python path
 project_root = Path(__file__).parent.parent.absolute()
 sys.path.append(str(project_root))
+
+# Set page config must be the first Streamlit command
+st.set_page_config(
+    page_title="Trade Analyzer",
+    page_icon="🔄",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
+
+# Apply theme styles
+ThemeManager.apply_theme_styles()
+
+# Initialize session state variables
+if 'user' not in st.session_state:
+    st.session_state.user = None
+if 'uid' not in st.session_state:
+    st.session_state.uid = None
+
+# Add custom CSS for persistent branding
+st.markdown("""
+    <style>
+        /* Header container */
+        .stApp > header {
+            background-color: white;
+            padding: 1rem;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        
+        /* Sidebar container */
+        .stSidebar {
+            background-color: white;
+            padding: 1rem;
+        }
+        
+        /* Logo container in header */
+        .stApp > header .logo-container {
+            margin: 0;
+            padding: 0;
+        }
+        
+        /* Logo container in sidebar */
+        .stSidebar .logo-container {
+            margin-bottom: 1rem;
+            padding: 0.5rem;
+            border-bottom: 1px solid rgba(0,0,0,0.1);
+        }
+        
+        /* Dark mode overrides */
+        @media (prefers-color-scheme: dark) {
+            .stApp > header {
+                background-color: #111111;
+            }
+            
+            .stSidebar {
+                background-color: #111111;
+            }
+            
+            .stSidebar .logo-container {
+                border-bottom-color: rgba(255,255,255,0.1);
+            }
+        }
+    </style>
+""", unsafe_allow_html=True)
+
+# Apply theme and branding styles
+ThemeManager.apply_theme_styles()
+BrandingComponent.add_branding_styles()
 
 def init_session_state():
     """Initialize session state variables for trade analysis."""
@@ -67,6 +141,38 @@ def search_card(scraper, analyzer, predictor, search_params):
     return card_data
 
 def main():
+    # Initialize session state for user if not exists
+    if 'user' not in st.session_state:
+        st.session_state.user = None
+    if 'uid' not in st.session_state:
+        st.session_state.uid = None
+    
+    # If user is not logged in, redirect to login page
+    if not st.session_state.user:
+        st.switch_page("pages/0_login.py")
+    
+    # Sidebar
+    with st.sidebar:
+        # Sidebar header with branding
+        st.markdown('<div class="logo-container">', unsafe_allow_html=True)
+        BrandingComponent.display_horizontal_logo()
+        st.markdown('</div>', unsafe_allow_html=True)
+        
+        # Navigation
+        st.page_link("app.py", label="Home", icon="🏠")
+        st.page_link("pages/1_market_analysis.py", label="Market Analysis", icon="📊")
+        st.page_link("pages/4_display_case.py", label="Display Case", icon="🖼️")
+        st.page_link("pages/3_collection_manager.py", label="Collection Manager", icon="📋")
+        st.page_link("pages/2_trade_analyzer.py", label="Trade Analyzer", icon="🔄")
+        st.page_link("pages/subscription_7.py", label="Subscription", icon="💎")
+        st.page_link("pages/6_profile_management.py", label="Profile", icon="👤")
+        
+        # Logout button
+        if st.button("Logout", type="primary"):
+            st.session_state.user = None
+            st.session_state.uid = None
+            st.rerun()
+    
     st.title("Trade Analyzer")
     
     # Initialize session state
@@ -150,12 +256,12 @@ def main():
                 )
                 
                 # Price Trend with forecast
-                trend_color = "🔥" if card['trend_direction'] == 'hot' else "❄️" if card['trend_direction'] == 'cooling' else "⚖️"
+                trend_color = TrendIndicator.get_trend_arrow(card['trend_direction'])
                 st.metric(
                     "Price Trend",
                     f"{trend_color} {card['trend_score']:+.1f}%",
                     f"90d Forecast: {((card['90_day_forecast'] - card['market_value']) / card['market_value'] * 100):+.1f}%",
-                    help="This shows if the card's price is going up (🔥), down (❄️), or staying steady (⚖️). The forecast tells you what to expect over the next few months."
+                    help="This shows if the card's price is going up (↑), down (↓), or staying steady (→). The forecast tells you what to expect over the next few months."
                 )
                 
                 # Volatility and Liquidity
@@ -242,12 +348,12 @@ def main():
                 )
                 
                 # Price Trend with forecast
-                trend_color = "🔥" if card['trend_direction'] == 'hot' else "❄️" if card['trend_direction'] == 'cooling' else "⚖️"
+                trend_color = TrendIndicator.get_trend_arrow(card['trend_direction'])
                 st.metric(
                     "Price Trend",
                     f"{trend_color} {card['trend_score']:+.1f}%",
                     f"90d Forecast: {((card['90_day_forecast'] - card['market_value']) / card['market_value'] * 100):+.1f}%",
-                    help="This shows if the card's price is going up (🔥), down (❄️), or staying steady (⚖️). The forecast tells you what to expect over the next few months."
+                    help="This shows if the card's price is going up (↑), down (↓), or staying steady (→). The forecast tells you what to expect over the next few months."
                 )
                 
                 # Volatility and Liquidity

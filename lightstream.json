@@ -1,0 +1,24 @@
+{
+  "name": "sports-card-analyzer",
+  "description": "Sports Card Analysis and Trading Platform",
+  "env": {
+    "PYTHONUNBUFFERED": "1",
+    "ENVIRONMENT": "production"
+  },
+  "formation": {
+    "web": {
+      "quantity": 1,
+      "size": "standard-1x"
+    }
+  },
+  "buildpacks": [
+    {
+      "url": "heroku/python"
+    }
+  ],
+  "addons": [
+    {
+      "plan": "heroku-postgresql:hobby-dev"
+    }
+  ]
+} 

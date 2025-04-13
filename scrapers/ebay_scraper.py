@@ -91,7 +91,7 @@ class EbayScraper:
                 negative_keywords = [kw.strip() for kw in negative_keywords.split(',')]
             for term in negative_keywords:
                 if term:
-                    query_parts.append(f"-{term}")
+                    query_parts.append(f"- {term}")  # Add space after hyphen
         
         # Only add default exclusions if no specific variation is requested
         if not variation:

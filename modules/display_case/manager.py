@@ -10,305 +10,353 @@ from ..core.firebase_manager import FirebaseManager
 import streamlit as st
 
 class DisplayCaseManager:
-    def __init__(self, uid: str, collection: pd.DataFrame):
+    def __init__(self, uid: str, collection: Union[pd.DataFrame, List[Dict]]):
         self.uid = uid
         self.collection = collection
         self.display_cases = {}
         self.last_refresh_time = None
         
     def load_display_cases(self, force_refresh: bool = False) -> Dict:
-        """Load display cases from Firebase and refresh card data from current collection"""
+        """Load display cases from Firebase subcollection and refresh card data from current collection"""
         try:
-            # Always get fresh collection data from Firebase
-            new_collection = DatabaseService.get_user_collection(self.uid)
+            print(f"\n=== Loading Display Cases ===")
+            print(f"UID: {self.uid}")
             
-            # Check if we need to refresh
-            collection_changed = force_refresh or self.last_refresh_time is None
+            # Get the Firebase client
+            db = FirebaseManager.get_firestore_client()
+            if not db:
+                print("ERROR: Firebase client not initialized")
+                return {}
+                
+            # Get the user document reference
+            user_ref = db.collection('users').document(self.uid)
             
-            # Compare collections if not forcing refresh
-            if not collection_changed and isinstance(self.collection, pd.DataFrame) and isinstance(new_collection, pd.DataFrame):
-                # Compare tags between old and new collection
-                old_tags = set()
-                new_tags = set()
-                
-                # Get tags from old collection
-                if 'tags' in self.collection.columns:
-                    for tags in self.collection['tags'].dropna():
-                        if isinstance(tags, str):
-                            old_tags.update(tag.strip() for tag in tags.split(','))
-                        elif isinstance(tags, list):
-                            old_tags.update(str(tag).strip() for tag in tags)
-                
-                # Get tags from new collection
-                if 'tags' in new_collection.columns:
-                    for tags in new_collection['tags'].dropna():
-                        if isinstance(tags, str):
-                            new_tags.update(tag.strip() for tag in tags.split(','))
-                        elif isinstance(tags, list):
-                            new_tags.update(str(tag).strip() for tag in tags)
-                
-                # Check if tags have changed
-                collection_changed = old_tags != new_tags
-                
-                if collection_changed:
-                    print("Collection has changed, refreshing display cases")
-                    print(f"Old tags: {old_tags}")
-                    print(f"New tags: {new_tags}")
-            elif not collection_changed and isinstance(self.collection, list) and isinstance(new_collection, list):
-                # Compare tags between old and new collection for list format
-                old_tags = set()
-                new_tags = set()
-                
-                # Get tags from old collection
-                for card in self.collection:
-                    card_dict = card.to_dict() if hasattr(card, 'to_dict') else card
-                    tags = card_dict.get('tags', [])
-                    if isinstance(tags, str):
-                        old_tags.update(tag.strip() for tag in tags.split(','))
-                    elif isinstance(tags, list):
-                        old_tags.update(str(tag).strip() for tag in tags)
-                
-                # Get tags from new collection
-                for card in new_collection:
-                    card_dict = card.to_dict() if hasattr(card, 'to_dict') else card
-                    tags = card_dict.get('tags', [])
-                    if isinstance(tags, str):
-                        new_tags.update(tag.strip() for tag in tags.split(','))
-                    elif isinstance(tags, list):
-                        new_tags.update(str(tag).strip() for tag in tags)
-                
-                # Check if tags have changed
-                collection_changed = old_tags != new_tags
-                
-                if collection_changed:
-                    print("Collection has changed, refreshing display cases")
-                    print(f"Old tags: {old_tags}")
-                    print(f"New tags: {new_tags}")
+            # Get the display cases subcollection
+            display_cases_ref = user_ref.collection('display_cases')
             
-            # Update collection and refresh time
-            self.collection = new_collection
-            self.last_refresh_time = datetime.now()
+            # Load all display cases
+            self.display_cases = {}
+            for doc in display_cases_ref.stream():
+                try:
+                    case_data = doc.to_dict()
+                    if case_data:
+                        # Ensure tags are in the correct format
+                        if 'tags' in case_data:
+                            case_data['tags'] = self._normalize_tags(case_data['tags'])
+                        
+                        # Ensure cards exist and are in the correct format
+                        if 'cards' not in case_data:
+                            case_data['cards'] = []
+                        else:
+                            # Validate and ensure photo data is present for each card
+                            for card in case_data['cards']:
+                                if 'photo' not in card or not card['photo']:
+                                    # Try to find the original card in the collection to get the photo
+                                    if isinstance(self.collection, pd.DataFrame):
+                                        matching_cards = self.collection[self.collection['id'] == card.get('id')]
+                                        if not matching_cards.empty:
+                                            card['photo'] = matching_cards.iloc[0]['photo']
+                                    else:
+                                        for original_card in self.collection:
+                                            if original_card.get('id') == card.get('id'):
+                                                card['photo'] = original_card.get('photo', '')
+                                                break
+                        
+                        # Calculate total value if not present
+                        if 'total_value' not in case_data:
+                            case_data['total_value'] = sum(card.get('current_value', 0) for card in case_data['cards'])
+                        
+                        self.display_cases[doc.id] = case_data
+                        print(f"Loaded display case: {doc.id}")
+                except Exception as e:
+                    print(f"Error loading display case {doc.id}: {str(e)}")
+                    continue
             
-            # Load fresh display cases from Firebase
-            loaded_cases = DatabaseService.get_user_display_cases(self.uid)
-            
-            # Ensure display_cases is always a dictionary
-            self.display_cases = loaded_cases if isinstance(loaded_cases, dict) else {}
-            
-            # Refresh card data for each display case
-            for case_name, display_case in self.display_cases.items():
-                filtered_cards = self._filter_cards_by_tags(display_case['tags'])
-                display_case['cards'] = filtered_cards
-                display_case['total_value'] = sum(card.get('current_value', 0) for card in filtered_cards)
-                print(f"Refreshed display case '{case_name}' with {len(filtered_cards)} cards")
-            
-            # Save the updated display cases
-            self.save_display_cases()
-            
+            print(f"Successfully loaded {len(self.display_cases)} display cases")
             return self.display_cases
             
         except Exception as e:
             print(f"Error loading display cases: {str(e)}")
-            import traceback
             print(f"Traceback: {traceback.format_exc()}")
-            # Ensure we always return a dictionary
-            self.display_cases = {}
-            return self.display_cases
-            
-    def _normalize_tags(self, tags) -> List[str]:
-        """Normalize tags to a consistent format with support for hierarchical tags"""
-        normalized_tags = []
+            return {}
+
+    def _normalize_tags(self, tags: Union[str, List[str]]) -> List[str]:
+        """Normalize tags to a consistent format"""
         try:
-            print(f"\n=== Normalizing Tags ===")
-            print(f"Input tags: {tags}")
-            print(f"Input tags type: {type(tags)}")
-            
-            if tags is None or (isinstance(tags, (list, pd.Series)) and len(tags) == 0):
-                print("Tags are None or empty")
+            if not tags:
                 return []
-                
+            
+            # Handle string input
             if isinstance(tags, str):
-                print("Processing string tags")
-                # First try to parse as JSON/list string
-                try:
-                    if tags.startswith('[') and tags.endswith(']'):
-                        print("Attempting to parse as JSON/list string")
-                        parsed_tags = ast.literal_eval(tags)
-                        if isinstance(parsed_tags, list):
-                            normalized_tags.extend([str(t).strip().lower() for t in parsed_tags if t and not pd.isna(t)])
-                        else:
-                            normalized_tags.append(str(parsed_tags).strip().lower())
-                except:
-                    print("Parsing as JSON failed, splitting by comma")
-                    # If parsing fails, split by comma and clean
-                    normalized_tags.extend([t.strip().lower() for t in tags.split(',') if t.strip()])
-            elif isinstance(tags, list):
-                print("Processing list tags")
-                normalized_tags.extend([str(t).strip().lower() for t in tags if t and not pd.isna(t)])
-            elif isinstance(tags, dict):
-                print("Processing dict tags")
-                normalized_tags.extend([str(t).strip().lower() for t in tags.values() if t and not pd.isna(t)])
-            elif isinstance(tags, pd.Series):
-                print("Processing Series tags")
-                normalized_tags.extend([str(t).strip().lower() for t in tags if t and not pd.isna(t)])
-            
-            # Process hierarchical tags and special operators
-            processed_tags = []
-            for tag in normalized_tags:
-                print(f"\nProcessing tag: {tag}")
-                # Handle tag exclusions
-                if tag.startswith('!'):
-                    processed_tag = f"exclude:{tag[1:]}"
-                    print(f"Exclusion tag: {processed_tag}")
-                    processed_tags.append(processed_tag)
-                # Handle tag ranges
-                elif ':' in tag and '-' in tag:
-                    category, range_str = tag.split(':', 1)
-                    start, end = range_str.split('-', 1)
-                    range_tags = [f"{category}:{i}" for i in range(int(start), int(end) + 1)]
-                    print(f"Range tags: {range_tags}")
-                    processed_tags.extend(range_tags)
+                # Try to parse as JSON if it looks like a JSON string
+                if tags.strip().startswith('[') and tags.strip().endswith(']'):
+                    try:
+                        tags = json.loads(tags)
+                    except json.JSONDecodeError:
+                        # If not valid JSON, split by comma
+                        tags = [tag.strip() for tag in tags.split(',')]
                 else:
-                    processed_tags.append(tag)
+                    # Split by comma if not JSON
+                    tags = [tag.strip() for tag in tags.split(',')]
             
-            # Remove duplicates, empty strings, and None values
-            processed_tags = list(set(tag for tag in processed_tags if tag and not pd.isna(tag)))
-            print(f"\nFinal normalized tags: {processed_tags}")
-            return sorted(processed_tags)  # Sort for consistency
+            # Ensure we have a list
+            if not isinstance(tags, list):
+                tags = [tags]
+            
+            # Process each tag
+            normalized_tags = []
+            for tag in tags:
+                if not tag:  # Skip empty tags
+                    continue
+                
+                # Handle nested lists
+                if isinstance(tag, list):
+                    normalized_tags.extend(self._normalize_tags(tag))
+                    continue
+                
+                # Convert to string and clean
+                tag = str(tag).strip().lower()
+                if tag:  # Only add non-empty tags
+                    normalized_tags.append(tag)
+            
+            # Remove duplicates while preserving order
+            seen = set()
+            return [x for x in normalized_tags if not (x in seen or seen.add(x))]
+            
         except Exception as e:
-            print(f"Error in _normalize_tags: {str(e)}")
-            import traceback
+            print(f"Error normalizing tags: {str(e)}")
+            print(f"Tags input: {tags}")
             print(f"Traceback: {traceback.format_exc()}")
             return []
 
-    def _has_matching_tags(self, card_tags, filter_tags) -> bool:
-        """Check if the card tags match the filter tags with support for advanced filtering"""
+    def _validate_collection(self) -> bool:
+        """
+        Validate that the collection exists and has data.
+        
+        Returns:
+            bool: True if collection is valid and contains data
+        """
+        print("\n=== Validating Collection ===")
+        if self.collection is None:
+            print("[DEBUG] Collection is None")
+            return False
+        
+        if isinstance(self.collection, pd.DataFrame):
+            print(f"[DEBUG] Collection is DataFrame with shape: {self.collection.shape}")
+            print(f"[DEBUG] Collection columns: {self.collection.columns.tolist()}")
+            if self.collection.empty:
+                print("[DEBUG] Collection DataFrame is empty")
+                return False
+            if 'tags' not in self.collection.columns:
+                print("[DEBUG] Collection DataFrame missing 'tags' column")
+                return False
+            return True
+        elif isinstance(self.collection, list):
+            print(f"[DEBUG] Collection is list with length: {len(self.collection)}")
+            if len(self.collection) == 0:
+                print("[DEBUG] Collection list is empty")
+                return False
+            
+            # Convert any non-dict items to dicts
+            for i, item in enumerate(self.collection):
+                if not isinstance(item, dict):
+                    try:
+                        if hasattr(item, 'to_dict'):
+                            self.collection[i] = item.to_dict()
+                        else:
+                            print(f"[DEBUG] Converting item {i} to dict")
+                            self.collection[i] = dict(item)
+                    except Exception as e:
+                        print(f"[DEBUG] Failed to convert item {i} to dict: {str(e)}")
+                        return False
+            
+            return True
+        
+        print(f"[DEBUG] Collection is neither DataFrame nor list, type: {type(self.collection)}")
+        return False
+
+    def _validate_card_photo(self, card: Dict) -> bool:
+        """
+        Validate and normalize card photo data.
+        
+        Args:
+            card (Dict): Card dictionary containing photo data
+            
+        Returns:
+            bool: True if photo is valid and properly formatted
+        """
+        if 'photo' not in card or not card['photo']:
+            print(f"[DEBUG] Card {card.get('player_name', 'Unknown')} has no photo")
+            return False
+        
+        if not isinstance(card['photo'], str):
+            try:
+                if isinstance(card['photo'], (list, dict)):
+                    print(f"[DEBUG] Invalid photo type for {card.get('player_name', 'Unknown')}")
+                    return False
+                card['photo'] = str(card['photo'])
+            except:
+                print(f"[DEBUG] Failed to convert photo to string for {card.get('player_name', 'Unknown')}")
+                return False
+        
+        return True
+
+    def _safe_get_card_value(self, card: Dict) -> float:
+        """
+        Safely extract and convert card value.
+        
+        Args:
+            card (Dict): Card dictionary containing value data
+            
+        Returns:
+            float: Card value, defaults to 0.0 if invalid
+        """
         try:
-            # Normalize both sets of tags
-            card_tags_normalized = self._normalize_tags(card_tags)
-            filter_tags_normalized = self._normalize_tags(filter_tags)
+            return float(card.get('current_value', 0))
+        except (ValueError, TypeError):
+            print(f"[DEBUG] Invalid value for card {card.get('player_name', 'Unknown')}")
+            return 0.0
+
+    def _filter_cards_by_tags(self, tags: List[str]) -> List[Dict]:
+        """
+        Filter collection cards by specified tags.
+        
+        Args:
+            tags (List[str]): List of tags to filter by
             
-            print(f"\nChecking tags match:")
-            print(f"Card tags: {card_tags_normalized}")
-            print(f"Filter tags: {filter_tags_normalized}")
+        Returns:
+            List[Dict]: List of matching cards
+        """
+        print("\n=== Filtering Cards by Tags ===")
+        print(f"Input tags: {tags}")
+        
+        if not self._validate_collection():
+            print("[ERROR] Collection validation failed")
+            return []
+        
+        normalized_filter_tags = set(t.lower().strip() for t in tags if t and not pd.isna(t))
+        print(f"Normalized filter tags: {normalized_filter_tags}")
+        
+        if not normalized_filter_tags:
+            print("[ERROR] No valid tags after normalization")
+            return []
+        
+        matching_cards = []
+        
+        if isinstance(self.collection, pd.DataFrame):
+            print("[DEBUG] Processing DataFrame collection")
+            for idx, row in self.collection.iterrows():
+                card = row.to_dict()
+                card_tags = self._normalize_tags(card.get('tags', []))
+                print(f"Card {idx} tags: {card_tags}")
+                if any(tag in card_tags for tag in normalized_filter_tags):
+                    if self._validate_card_photo(card):
+                        matching_cards.append(card)
+                        print(f"Added card {idx} to matches")
+        else:
+            print("[DEBUG] Processing list collection")
+            for idx, card in enumerate(self.collection):
+                if hasattr(card, 'to_dict'):
+                    card = card.to_dict()
+                card_tags = self._normalize_tags(card.get('tags', []))
+                print(f"Card {idx} tags: {card_tags}")
+                if any(tag in card_tags for tag in normalized_filter_tags):
+                    if self._validate_card_photo(card):
+                        matching_cards.append(card)
+                        print(f"Added card {idx} to matches")
+        
+        print(f"Found {len(matching_cards)} matching cards")
+        return matching_cards
+
+    def create_display_case(self, name: str, description: str, tags: List[str]) -> bool:
+        """Create a new display case with optimized data storage"""
+        try:
+            print(f"\n=== Creating Display Case ===")
+            print(f"Name: {name}")
+            print(f"Tags: {tags}")
             
-            # If filter tags are empty, return True (show all cards)
-            if not filter_tags_normalized:
-                print("No filter tags specified, showing all cards")
+            if not self._validate_collection():
+                print("[ERROR] Invalid collection")
+                return False
+            
+            # Normalize tags
+            normalized_tags = self._normalize_tags(tags)
+            if not normalized_tags:
+                print("[ERROR] No valid tags provided")
+                return False
+            
+            # Filter cards by tags
+            filtered_cards = self._filter_cards_by_tags(normalized_tags)
+            if not filtered_cards:
+                print("[ERROR] No cards found matching the tags")
+                return False
+            
+            # Optimize card data for storage
+            optimized_cards = []
+            for card in filtered_cards:
+                try:
+                    optimized_card = {
+                        'id': card.get('id', ''),
+                        'player_name': card.get('player_name', ''),
+                        'year': card.get('year', ''),
+                        'set_name': card.get('set_name', ''),
+                        'card_number': card.get('card_number', ''),
+                        'current_value': card.get('current_value', 0),
+                        'grade': card.get('grade', ''),
+                        'tags': card.get('tags', []),
+                        'photo': card.get('photo', '')  # Include the photo field
+                    }
+                    optimized_cards.append(optimized_card)
+                except Exception as e:
+                    print(f"Error optimizing card data: {str(e)}")
+                    continue
+            
+            # Create display case with optimized data
+            display_case = {
+                'name': name,
+                'description': description,
+                'tags': normalized_tags,
+                'cards': optimized_cards,
+                'total_value': sum(card.get('current_value', 0) for card in filtered_cards),
+                'created_at': datetime.now().isoformat(),
+                'updated_at': datetime.now().isoformat()
+            }
+            
+            # Get the Firebase client
+            db = FirebaseManager.get_firestore_client()
+            if not db:
+                print("ERROR: Firebase client not initialized")
+                return False
+                
+            # Get the user document reference
+            user_ref = db.collection('users').document(self.uid)
+            
+            # Get the display cases subcollection
+            display_cases_ref = user_ref.collection('display_cases')
+            
+            # Generate a safe document ID
+            safe_doc_id = name.lower().replace(' ', '_').replace('/', '_').replace('\\', '_')
+            
+            # Save the display case document
+            try:
+                display_cases_ref.document(safe_doc_id).set(display_case)
+                print(f"Successfully created display case: {name}")
+                
+                # Update local state
+                self.display_cases[safe_doc_id] = display_case
                 return True
-            
-            # If card has no tags but filter tags exist, return False
-            if not card_tags_normalized:
-                print("Card has no tags but filter tags exist")
+            except Exception as e:
+                print(f"Error saving display case to Firebase: {str(e)}")
+                print(f"Traceback: {traceback.format_exc()}")
                 return False
-            
-            # Convert to sets for case-insensitive comparison
-            card_tags_set = set(card_tags_normalized)
-            filter_tags_set = set(filter_tags_normalized)
-            
-            # Check for exclusions first
-            exclusion_tags = {tag[8:] for tag in filter_tags_set if tag.startswith('exclude:')}
-            if exclusion_tags and any(tag in card_tags_set for tag in exclusion_tags):
-                print(f"Card excluded by tags: {exclusion_tags}")
-                return False
-            
-            # Remove exclusion tags from filter set
-            filter_tags_set = {tag for tag in filter_tags_set if not tag.startswith('exclude:')}
-            
-            # Check if any filter tag matches any card tag
-            matches = any(tag in card_tags_set for tag in filter_tags_set)
-            print(f"Tag match result: {matches}")
-            return matches
             
         except Exception as e:
-            print(f"Error in _has_matching_tags: {str(e)}")
-            import traceback
+            print(f"Error creating display case: {str(e)}")
             print(f"Traceback: {traceback.format_exc()}")
             return False
 
-    def _filter_cards_by_tags(self, tags: List[str]) -> List[Dict]:
-        """Filter cards from current collection based on tags"""
-        if not self.collection:
-            print("No collection available for filtering")
-            return []
-        
-        # Normalize the filter tags
-        normalized_filter_tags = self._normalize_tags(tags)
-        print(f"\nFiltering with tags: {normalized_filter_tags}")
-        
-        # Filter cards based on tags
-        filtered_cards = []
-        
-        # Handle both DataFrame and list formats
-        if isinstance(self.collection, pd.DataFrame):
-            print("\nProcessing DataFrame collection")
-            print(f"Collection shape: {self.collection.shape}")
-            print(f"Collection columns: {self.collection.columns.tolist()}")
-            
-            if 'tags' not in self.collection.columns:
-                print("ERROR: 'tags' column not found in collection")
-                return []
-                
-            # Print sample of tags from collection
-            print("\nSample of tags from collection:")
-            for idx, row in self.collection.head().iterrows():
-                print(f"Card {idx} tags: {row['tags']}")
-            
-            for idx, card in self.collection.iterrows():
-                card_dict = card.to_dict()
-                card_tags = card_dict.get('tags', [])
-                print(f"\nChecking card {idx}:")
-                print(f"Card tags: {card_tags}")
-                print(f"Card tags type: {type(card_tags)}")
-                
-                if self._has_matching_tags(card_tags, normalized_filter_tags):
-                    print("Card matches filter tags")
-                    filtered_cards.append(card_dict)
-                else:
-                    print("Card does not match filter tags")
-        else:
-            # Handle list format (both Card objects and dictionaries)
-            print("\nProcessing list collection")
-            for idx, card in enumerate(self.collection):
-                try:
-                    print(f"\nChecking card {idx}:")
-                    # Convert to dictionary if it's a Card object
-                    card_dict = card.to_dict() if hasattr(card, 'to_dict') else card
-                    
-                    # Get tags from the card
-                    card_tags = []
-                    if 'tags' in card_dict:
-                        tags_data = card_dict['tags']
-                        print(f"Raw tags data: {tags_data}")
-                        print(f"Raw tags type: {type(tags_data)}")
-                        
-                        if isinstance(tags_data, str):
-                            card_tags = [tag.strip() for tag in tags_data.split(',') if tag.strip()]
-                        elif isinstance(tags_data, list):
-                            card_tags = [str(tag).strip() for tag in tags_data if tag]
-                        else:
-                            print(f"Unexpected tags data type: {type(tags_data)}")
-                            continue
-                    
-                    print(f"Processed card tags: {card_tags}")
-                    
-                    # Check if any of the card's tags match the filter tags
-                    if self._has_matching_tags(card_tags, normalized_filter_tags):
-                        print("Card matches filter tags")
-                        filtered_cards.append(card_dict)
-                    else:
-                        print("Card does not match filter tags")
-                except Exception as e:
-                    print(f"Error processing card {idx}: {str(e)}")
-                    import traceback
-                    print(f"Traceback: {traceback.format_exc()}")
-                    continue
-        
-        print(f"\nTotal cards matching tags: {len(filtered_cards)}")
-        return filtered_cards
-            
     def save_display_cases(self) -> bool:
-        """Save display cases to Firebase"""
+        """Save display cases to Firebase as separate documents in a subcollection"""
         try:
             print(f"\n=== Saving Display Cases ===")
             print(f"UID: {self.uid}")
@@ -320,74 +368,34 @@ class DisplayCaseManager:
                 print("ERROR: Database service not initialized")
                 return False
                 
-            # Save the display cases
-            success = db.save_display_cases(self.uid, self.display_cases)
-            print(f"Save result: {success}")
-            return success
+            # Get the user document reference
+            user_ref = db.collection('users').document(self.uid)
+            
+            # Get the display cases subcollection
+            display_cases_ref = user_ref.collection('display_cases')
+            
+            # Save each display case as a separate document
+            for case_name, display_case in self.display_cases.items():
+                try:
+                    # Convert the display case to a dictionary if it's not already
+                    case_data = dict(display_case) if not isinstance(display_case, dict) else display_case
+                    
+                    # Save the display case document
+                    display_cases_ref.document(case_name).set(case_data)
+                    print(f"Successfully saved display case: {case_name}")
+                    
+                except Exception as e:
+                    print(f"Error saving display case {case_name}: {str(e)}")
+                    print(f"Traceback: {traceback.format_exc()}")
+                    return False
+                    
+            print("All display cases saved successfully")
+            return True
+            
         except Exception as e:
             print(f"Error saving display cases: {str(e)}")
-            import traceback
             print(f"Traceback: {traceback.format_exc()}")
             return False
-            
-    def create_display_case(self, name: str, description: str, tags: List[str]) -> Optional[Dict]:
-        """Create a new display case with the given name, description, and tags"""
-        try:
-            # Debug print the input parameters
-            print(f"Creating display case with name: {name}")
-            print(f"Description: {description}")
-            print(f"Tags: {tags}")
-            
-            # Normalize tags
-            normalized_tags = self._normalize_tags(tags)
-            print(f"Normalized tags: {normalized_tags}")
-            
-            # Filter cards based on tags
-            filtered_cards = self._filter_cards_by_tags(normalized_tags)
-            print(f"Found {len(filtered_cards)} cards with the selected tags")
-            
-            # Process cards to ensure they're serializable
-            processed_cards = []
-            for card in filtered_cards:
-                processed_card = {}
-                for key, value in card.items():
-                    if isinstance(value, (str, int, float, bool, list, dict, type(None))):
-                        processed_card[key] = value
-                    else:
-                        processed_card[key] = str(value)
-                processed_cards.append(processed_card)
-            
-            # Calculate total value
-            total_value = sum(float(card.get('current_value', 0)) for card in processed_cards)
-            print(f"Total value of display case: ${total_value:.2f}")
-            
-            # Create the display case
-            display_case = {
-                'name': name,
-                'description': description,
-                'tags': normalized_tags,
-                'cards': processed_cards,
-                'created_date': datetime.now().isoformat(),
-                'total_value': total_value
-            }
-            
-            # Add the display case to the dictionary
-            self.display_cases[name] = display_case
-            
-            # Save the display cases
-            save_result = self.save_display_cases()
-            print(f"Save result: {save_result}")
-            
-            if save_result:
-                return display_case
-            else:
-                print("Failed to save display case")
-                return None
-        except Exception as e:
-            print(f"Error creating display case: {str(e)}")
-            import traceback
-            print(f"Traceback: {traceback.format_exc()}")
-            return None
             
     def get_all_tags(self) -> List[str]:
         """Get all unique tags from the current collection"""
@@ -441,17 +449,42 @@ class DisplayCaseManager:
             return []
         
     def delete_display_case(self, name: str) -> bool:
-        """Delete a display case from both local memory and Firebase"""
+        """Delete a display case from both local memory and Firebase subcollection"""
         try:
+            print(f"\n=== Deleting Display Case ===")
+            print(f"Case name: {name}")
+            
+            # Get the database service
+            db = DatabaseService.get_instance()
+            if not db:
+                print("ERROR: Database service not initialized")
+                return False
+                
+            # Get the user document reference
+            user_ref = db.collection('users').document(self.uid)
+            
+            # Get the display cases subcollection
+            display_cases_ref = user_ref.collection('display_cases')
+            
+            # Delete from Firebase
+            try:
+                display_cases_ref.document(name).delete()
+                print(f"Successfully deleted display case from Firebase: {name}")
+            except Exception as e:
+                print(f"Error deleting display case from Firebase: {str(e)}")
+                print(f"Traceback: {traceback.format_exc()}")
+                return False
+                
+            # Delete from local memory
             if name in self.display_cases:
                 del self.display_cases[name]
-                if self.save_display_cases():
-                    # Reload display cases to ensure sync
-                    self.load_display_cases()
-                    return True
-            return False
+                print(f"Successfully deleted display case from local memory: {name}")
+                
+            return True
+            
         except Exception as e:
             print(f"Error deleting display case: {str(e)}")
+            print(f"Traceback: {traceback.format_exc()}")
             return False
             
     def get_display_case(self, name: str) -> Optional[Dict]:

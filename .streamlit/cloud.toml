@@ -1,0 +1,27 @@
+[deployment]
+# The command to start the application
+command = "streamlit run app.py"
+
+# The port the application will run on
+port = 8501
+
+# The directory where the application code is located
+directory = "."
+
+# Environment variables to be set
+[deployment.environment]
+PYTHONPATH = "."
+STREAMLIT_SERVER_PORT = "8501"
+STREAMLIT_SERVER_ADDRESS = "0.0.0.0"
+
+# Memory and CPU requirements
+[deployment.resources]
+memory = "1G"
+cpu = "1"
+
+# Health check configuration
+[deployment.health_check]
+path = "/_stcore/health"
+interval = 30
+timeout = 10
+retries = 3 

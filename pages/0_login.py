@@ -106,7 +106,7 @@ def handle_auth_error(e):
         return f"An error occurred: {str(e)}"
 
 def main():
-    # Initialize session state variables
+    # Initialize session state for user if not exists
     if 'user' not in st.session_state:
         st.session_state.user = None
     if 'preferences' not in st.session_state:
@@ -123,8 +123,22 @@ def main():
     # Initialize cookies manager
     cookies = streamlit_cookies_manager.CookieManager()
     
-    # Display logo at the top
-    BrandingComponent.display_vertical_logo()
+    # Sidebar
+    with st.sidebar:
+        # Sidebar header with branding
+        st.markdown('<div class="logo-container">', unsafe_allow_html=True)
+        BrandingComponent.display_horizontal_logo()
+        st.markdown('</div>', unsafe_allow_html=True)
+        
+        # Navigation
+        st.page_link("app.py", label="Home", icon="🏠")
+        st.page_link("pages/1_market_analysis.py", label="Market Analysis", icon="📊")
+        st.page_link("pages/4_display_case.py", label="Display Case", icon="📸")
+        st.page_link("pages/3_collection_manager.py", label="Collection Manager", icon="📋")
+        st.page_link("pages/2_trade_analyzer.py", label="Trade Analyzer", icon="🔄")
+        st.page_link("pages/6_profile_management.py", label="Profile", icon="👤")
+    
+    st.title("Login")
     
     # Add clear cookies button in sidebar
     if st.sidebar.button("Clear Cookies"):
