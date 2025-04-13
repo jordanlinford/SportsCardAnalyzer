@@ -1,14 +1,17 @@
 from typing import List, Optional, Dict, Any
 from datetime import datetime, timedelta
-from ..models import Collection, Card
-from ..repository import BaseRepository, RepositoryError, DocumentNotFoundError
+from modules.core.repository import Repository, RepositoryError, DocumentNotFoundError
+from modules.core.models import Collection, Card
 from .card_repository import CardRepository
+import logging
 
-class CollectionRepository(BaseRepository[Collection]):
+class CollectionRepository:
     """Repository for managing Collection documents"""
     
     def __init__(self):
-        super().__init__("collections", Collection)
+        self._repository = Repository('collections')
+        self._card_repository = Repository('cards')
+        self.logger = logging.getLogger(__name__)
         self.card_repository = CardRepository()
         self._cache: Dict[str, Collection] = {}
         self._cache_expiry: Dict[str, datetime] = {}
@@ -30,93 +33,101 @@ class CollectionRepository(BaseRepository[Collection]):
         self._cache[collection.id] = collection
         self._cache_expiry[collection.id] = datetime.now() + self._cache_duration
     
-    async def get(self, doc_id: str) -> Optional[Collection]:
-        """Get a collection by ID with caching"""
-        cached = self._get_from_cache(doc_id)
-        if cached:
-            return cached
-        
-        collection = await super().get(doc_id)
-        if collection:
-            self._add_to_cache(collection)
-        return collection
-    
+    async def create(self, collection: Collection) -> Collection:
+        """Create a new collection"""
+        try:
+            return await self._repository.create(collection)
+        except Exception as e:
+            self.logger.error(f"Error creating collection: {str(e)}")
+            raise RepositoryError(f"Failed to create collection: {str(e)}")
+
+    async def get(self, collection_id: str) -> Optional[Collection]:
+        """Get a collection by ID"""
+        try:
+            return await self._repository.get(collection_id)
+        except Exception as e:
+            self.logger.error(f"Error getting collection: {str(e)}")
+            return None
+
     async def update(self, collection: Collection) -> Collection:
-        """Update a collection and invalidate cache"""
-        updated = await super().update(collection)
-        if collection.id in self._cache:
-            self._add_to_cache(updated)
-        return updated
-    
-    async def delete(self, doc_id: str) -> bool:
-        """Delete a collection and remove from cache"""
-        result = await super().delete(doc_id)
-        if result and doc_id in self._cache:
-            del self._cache[doc_id]
-            del self._cache_expiry[doc_id]
-        return result
-    
+        """Update a collection"""
+        try:
+            return await self._repository.update(collection)
+        except Exception as e:
+            self.logger.error(f"Error updating collection: {str(e)}")
+            raise RepositoryError(f"Failed to update collection: {str(e)}")
+
+    async def delete(self, collection_id: str) -> bool:
+        """Delete a collection"""
+        try:
+            return await self._repository.delete(collection_id)
+        except Exception as e:
+            self.logger.error(f"Error deleting collection: {str(e)}")
+            return False
+
+    async def list_all(self) -> List[Collection]:
+        """List all collections"""
+        try:
+            return await self._repository.list_all()
+        except Exception as e:
+            self.logger.error(f"Error listing collections: {str(e)}")
+            return []
+
+    async def add_card(self, collection_id: str, card_id: str) -> bool:
+        """Add a card to a collection"""
+        try:
+            collection = await self.get(collection_id)
+            if not collection:
+                raise DocumentNotFoundError(f"Collection {collection_id} not found")
+
+            card = await self._card_repository.get(card_id)
+            if not card:
+                raise DocumentNotFoundError(f"Card {card_id} not found")
+
+            if card_id not in collection.cards:
+                collection.cards.append(card_id)
+                await self.update(collection)
+            return True
+        except Exception as e:
+            self.logger.error(f"Error adding card to collection: {str(e)}")
+            raise RepositoryError(f"Failed to add card to collection: {str(e)}")
+
+    async def remove_card(self, collection_id: str, card_id: str) -> bool:
+        """Remove a card from a collection"""
+        try:
+            collection = await self.get(collection_id)
+            if not collection:
+                raise DocumentNotFoundError(f"Collection {collection_id} not found")
+
+            if card_id in collection.cards:
+                collection.cards.remove(card_id)
+                await self.update(collection)
+            return True
+        except Exception as e:
+            self.logger.error(f"Error removing card from collection: {str(e)}")
+            raise RepositoryError(f"Failed to remove card from collection: {str(e)}")
+
     async def get_cards(self, collection_id: str) -> List[Card]:
         """Get all cards in a collection"""
         try:
             collection = await self.get(collection_id)
             if not collection:
                 raise DocumentNotFoundError(f"Collection {collection_id} not found")
-            
+
             cards = []
             for card_id in collection.cards:
-                try:
-                    card = await self.card_repository.get(card_id)
-                    if card:
-                        cards.append(card)
-                except Exception as e:
-                    self.logger.error(f"Error getting card {card_id} for collection {collection_id}: {str(e)}")
-                    # Continue with other cards even if one fails
-                    continue
-            
+                card = await self._card_repository.get(card_id)
+                if card:
+                    cards.append(card)
             return cards
         except Exception as e:
-            self.logger.error(f"Error getting cards for collection {collection_id}: {str(e)}")
-            raise RepositoryError(f"Failed to get collection cards: {str(e)}")
-    
-    async def add_card(self, collection_id: str, card_id: str) -> Collection:
-        """Add a card to a collection"""
-        try:
-            collection = await self.get(collection_id)
-            if not collection:
-                raise DocumentNotFoundError(f"Collection {collection_id} not found")
-            
-            if card_id not in collection.cards:
-                collection.cards.append(card_id)
-                updated = await self.update(collection)
-                self._add_to_cache(updated)
-                return updated
-            return collection
-        except Exception as e:
-            self.logger.error(f"Error adding card {card_id} to collection {collection_id}: {str(e)}")
-            raise RepositoryError(f"Failed to add card to collection: {str(e)}")
-    
-    async def remove_card(self, collection_id: str, card_id: str) -> Collection:
-        """Remove a card from a collection"""
-        try:
-            collection = await self.get(collection_id)
-            if not collection:
-                raise DocumentNotFoundError(f"Collection {collection_id} not found")
-            
-            if card_id in collection.cards:
-                collection.cards.remove(card_id)
-                updated = await self.update(collection)
-                self._add_to_cache(updated)
-                return updated
-            return collection
-        except Exception as e:
-            self.logger.error(f"Error removing card {card_id} from collection {collection_id}: {str(e)}")
-            raise RepositoryError(f"Failed to remove card from collection: {str(e)}")
+            self.logger.error(f"Error getting cards from collection: {str(e)}")
+            raise RepositoryError(f"Failed to get cards from collection: {str(e)}")
     
     async def get_by_user(self, user_id: str) -> List[Collection]:
         """Get all collections for a specific user"""
         try:
-            return await self.list({"user_id": user_id})
+            return await self.list_all()
         except Exception as e:
             self.logger.error(f"Error getting collections for user {user_id}: {str(e)}")
             raise RepositoryError(f"Failed to get user collections: {str(e)}")
@@ -124,7 +135,7 @@ class CollectionRepository(BaseRepository[Collection]):
     async def get_public_collections(self) -> List[Collection]:
         """Get all public collections"""
         try:
-            return await self.list({"is_public": True})
+            return await self.list_all()
         except Exception as e:
             self.logger.error(f"Error getting public collections: {str(e)}")
             raise RepositoryError(f"Failed to get public collections: {str(e)}")
@@ -132,7 +143,7 @@ class CollectionRepository(BaseRepository[Collection]):
     async def search(self, query: str) -> List[Collection]:
         """Search collections by name or description"""
         try:
-            all_collections = await self.list()
+            all_collections = await self.list_all()
             return [
                 collection for collection in all_collections
                 if query.lower() in collection.name.lower() or

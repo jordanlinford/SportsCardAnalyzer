@@ -1,31 +1,32 @@
 from typing import Optional, List, Dict
 from datetime import datetime, timedelta
+from modules.core.repository import Repository, RepositoryError
 from modules.database.schema import UserSubscription, UserUsage, SubscriptionHistory
 from modules.core.firebase_manager import FirebaseManager
-from modules.core.repository import BaseRepository
+import logging
 
-class SubscriptionDB(BaseRepository[UserSubscription]):
+class SubscriptionDB:
     """Repository for managing subscription data"""
     
     def __init__(self):
-        super().__init__("subscriptions", UserSubscription)
-        self.db = FirebaseManager.get_firestore_client()
-        self.subscriptions_collection = self.db.collection('subscriptions')
-        self.usage_collection = self.db.collection('usage_stats')
-        self.history_collection = self.db.collection('subscription_history')
+        self.firebase = FirebaseManager.get_instance()
+        self.logger = logging.getLogger(__name__)
+        self._repository = Repository('subscriptions')
+        self._usage_repository = Repository('usage_stats')
+        self._history_repository = Repository('subscription_history')
     
     def get_user_subscription(self, user_id: str) -> Optional[UserSubscription]:
         """Get user's subscription information"""
-        doc = self.subscriptions_collection.document(user_id).get()
-        if doc.exists:
-            return UserSubscription(**doc.to_dict())
+        doc = self._repository.get_document(user_id)
+        if doc:
+            return UserSubscription(**doc)
         return None
     
     def get_user_usage(self, user_id: str) -> Dict:
         """Get user's usage statistics"""
-        doc = self.usage_collection.document(user_id).get()
-        if doc.exists:
-            return doc.to_dict()
+        doc = self._usage_repository.get_document(user_id)
+        if doc:
+            return doc
         return {
             'cards_analyzed': 0,
             'display_cases_created': 0,
@@ -37,7 +38,7 @@ class SubscriptionDB(BaseRepository[UserSubscription]):
         """Update user's subscription information"""
         try:
             subscription_dict = subscription.model_dump()
-            self.subscriptions_collection.document(subscription.user_id).set(subscription_dict)
+            self._repository.update_document(subscription.user_id, subscription_dict)
             return True
         except Exception as e:
             self.logger.error(f"Error updating subscription: {str(e)}")
@@ -47,7 +48,7 @@ class SubscriptionDB(BaseRepository[UserSubscription]):
         """Update user's usage statistics"""
         try:
             usage_dict = usage.model_dump()
-            self.usage_collection.document(usage.user_id).set(usage_dict, merge=True)
+            self._usage_repository.update_document(usage.user_id, usage_dict)
             return True
         except Exception as e:
             self.logger.error(f"Error updating usage stats: {str(e)}")
@@ -55,13 +56,13 @@ class SubscriptionDB(BaseRepository[UserSubscription]):
     
     def get_subscription_history(self, user_id: str) -> List[Dict]:
         """Get user's subscription history"""
-        docs = self.subscriptions_collection.document(user_id).collection('history').get()
-        return [doc.to_dict() for doc in docs]
+        docs = self._repository.get_collection(user_id, 'history')
+        return [doc for doc in docs]
     
     def add_subscription_history(self, user_id: str, history_data: Dict) -> bool:
         """Add an entry to user's subscription history"""
         try:
-            self.subscriptions_collection.document(user_id).collection('history').add(history_data)
+            self._repository.add_document(user_id, 'history', history_data)
             return True
         except Exception as e:
             self.logger.error(f"Error adding subscription history: {str(e)}")
@@ -105,7 +106,7 @@ class SubscriptionDB(BaseRepository[UserSubscription]):
     def get_user(self, user_id: str) -> Optional[Dict]:
         """Get user information from Firebase"""
         try:
-            doc = self.db.collection('users').document(user_id).get()
+            doc = self.firebase.collection('users').document(user_id).get()
             if doc.exists:
                 return doc.to_dict()
             return None

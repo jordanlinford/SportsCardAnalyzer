@@ -28,162 +28,110 @@ def create_checkout_session_with_promo(payment_service, price_id, customer_id, p
     return payment_service.create_checkout_session(**session_params)
 
 def render_subscription_page():
-    st.title("Subscription Management")
-    
-    # Initialize services
-    payment_service = PaymentService()
-    subscription_service = SubscriptionService()
-    
-    # Get current user's subscription status
-    if st.session_state.user and st.session_state.uid:
-        user = st.session_state.user
-        user_id = st.session_state.uid
-        customer_id = user.get('stripe_customer_id')
-        
-        # Get current plan
-        current_plan = subscription_service.get_user_plan(user_id)
-        
-        # Display current plan status
-        st.header("Current Plan")
-        
-        # Handle admin users
-        if current_plan.get('is_admin'):
-            st.success("🔑 Admin Account - Full Access")
-            st.info("As an admin, you have access to all premium features.")
-            return  # Stop here for admin users
-            
-        if current_plan['plan'] == 'free':
-            st.info("You are currently on the Free plan")
-        else:
-            st.success(f"✅ You are currently subscribed to the {current_plan['plan'].title()} plan")
-            if customer_id:
-                subscriptions = payment_service.get_customer_subscriptions(customer_id)
-                active_subscription = next((sub for sub in subscriptions.data if sub.status == 'active'), None)
-                if active_subscription:
-                    st.write(f"Next billing date: {datetime.fromtimestamp(active_subscription.current_period_end).strftime('%B %d, %Y')}")
-                    
-                    # Use a form for the cancel button to handle the state properly
-                    with st.form("cancel_subscription_form"):
-                        if st.form_submit_button("Cancel Subscription"):
-                            if payment_service.cancel_subscription(active_subscription.id):
-                                st.success("Subscription cancelled successfully")
-                                # Update the current plan to free
-                                subscription_service.update_subscription(
-                                    user_id=user_id,
-                                    plan='free',
-                                    stripe_data={'status': 'canceled'}
-                                )
-                                # Force a page refresh
-                                st.experimental_rerun()
-                            else:
-                                st.error("Failed to cancel subscription")
-    else:
-        st.warning("Please log in to access subscription features")
-        st.stop()
-        
-    # Only show plan comparison for non-admin users
-    if not current_plan.get('is_admin'):
-        # Display plan comparison
-        st.header("Available Plans")
-        
-        col1, col2, col3 = st.columns(3)
+    """Render the subscription management page"""
+    try:
+        # Initialize session state if needed
+        if 'user' not in st.session_state:
+            st.session_state.user = None
+        if 'uid' not in st.session_state:
+            st.session_state.uid = None
+
+        # Check if user is logged in
+        if not st.session_state.user or not st.session_state.uid:
+            st.warning("Please log in to manage your subscription")
+            return
+
+        # Initialize services
+        subscription_service = SubscriptionService()
+        payment_service = PaymentService()
+
+        # Get user's current plan
+        plan = subscription_service.get_user_plan(st.session_state.uid)
+        usage_stats = subscription_service.get_usage_stats(st.session_state.uid)
+
+        # Display current plan and usage
+        st.header("Your Subscription")
+        col1, col2 = st.columns(2)
         
         with col1:
-            st.subheader("Free Plan")
-            st.write("$0/month")
-            st.write("✅ Up to 25 cards in collection")
-            st.write("✅ Up to 3 display cases")
-            st.write("✅ 5 searches per day")
-            st.write("✅ Basic card analysis")
-            st.write("✅ Price tracking")
-            st.write("❌ Advanced analytics")
-            st.write("❌ Priority support")
-            
-            if current_plan['plan'] == 'free':
-                st.success("Current Plan")
-        
+            st.subheader("Current Plan")
+            st.write(f"Plan: {plan['plan'].capitalize()}")
+            if plan['plan'] != 'free':
+                st.write(f"Status: {plan.get('status', 'active')}")
+                if 'current_period_end' in plan:
+                    end_date = datetime.fromtimestamp(plan['current_period_end'])
+                    st.write(f"Renews on: {end_date.strftime('%B %d, %Y')}")
+
         with col2:
-            st.subheader("Basic Plan")
-            st.write("$9.99/month")
-            st.write("✅ Up to 50 cards in collection")
-            st.write("✅ Up to 5 display cases")
-            st.write("✅ Unlimited searches")
-            st.write("✅ Basic card analysis")
-            st.write("✅ Price tracking")
-            st.write("✅ Market insights")
-            st.write("❌ Advanced analytics")
-            st.write("❌ Priority support")
+            st.subheader("Usage")
+            st.write(f"Cards: {usage_stats['card_count']}/{plan['limits']['card_limit']}")
+            st.write(f"Display Cases: {usage_stats['display_case_count']}/{plan['limits']['display_case_limit']}")
+            st.write(f"Daily Searches: {usage_stats['daily_search_count']}/{plan['limits']['daily_search_limit']}")
+
+        # Display available features
+        st.subheader("Available Features")
+        features = subscription_service.get_available_features(st.session_state.uid)
+        for feature in features:
+            st.write(f"✓ {feature.replace('_', ' ').title()}")
+
+        # Upgrade options for free plan users
+        if plan['plan'] == 'free':
+            st.subheader("Upgrade Your Plan")
+            st.write("Get access to more features and higher limits!")
             
-            if current_plan['plan'] != 'premium':
-                # Create a form for basic plan upgrade with promo code
-                with st.form(key="basic_plan_form"):
-                    promo_code_basic = st.text_input("Promo Code (Optional)", key="promo_basic")
-                    if st.form_submit_button("Upgrade to Basic"):
-                        if not customer_id:
-                            # Create Stripe customer
-                            customer = payment_service.create_customer(
-                                email=user['email'],
-                                name=user.get('display_name', '')
-                            )
-                            customer_id = customer.id
-                        
-                        try:
-                            # Create checkout session with promo code if provided
-                            session = create_checkout_session_with_promo(
-                                payment_service,
-                                os.getenv('STRIPE_BASIC_PLAN_PRICE_ID'),
-                                customer_id,
-                                promo_code_basic if promo_code_basic else None
-                            )
-                            st.markdown(f'<a href="{session.url}" target="_blank">Complete Payment</a>', unsafe_allow_html=True)
-                        except Exception as e:
-                            st.error(f"Error: {str(e)}")
-        
-        with col3:
-            st.subheader("Premium Plan")
-            st.write("$19.99/month")
-            st.write("✅ Unlimited cards in collection")
-            st.write("✅ Unlimited display cases")
-            st.write("✅ Unlimited searches")
-            st.write("✅ All Basic features")
-            st.write("✅ Advanced analytics")
-            st.write("✅ Priority support")
-            st.write("✅ Bulk card analysis")
-            st.write("✅ Custom reports")
+            col1, col2 = st.columns(2)
             
-            if current_plan['plan'] != 'premium':
-                # Create a form for premium plan upgrade with promo code
-                with st.form(key="premium_plan_form"):
-                    promo_code_premium = st.text_input("Promo Code (Optional)", key="promo_premium")
-                    if st.form_submit_button("Upgrade to Premium"):
-                        if not customer_id:
-                            # Create Stripe customer
-                            customer = payment_service.create_customer(
-                                email=user['email'],
-                                name=user.get('display_name', '')
-                            )
-                            customer_id = customer.id
-                        
-                        try:
-                            # Create checkout session with promo code if provided
-                            session = create_checkout_session_with_promo(
-                                payment_service,
-                                os.getenv('STRIPE_PREMIUM_PLAN_PRICE_ID'),
-                                customer_id,
-                                promo_code_premium if promo_code_premium else None
-                            )
-                            st.markdown(f'<a href="{session.url}" target="_blank">Complete Payment</a>', unsafe_allow_html=True)
-                        except Exception as e:
-                            st.error(f"Error: {str(e)}")
-        
-        # Payment History
-        st.header("Payment History")
-        if customer_id:
-            # Get payment history
-            # TODO: Implement payment history display
-            st.info("Payment history will be displayed here")
+            with col1:
+                st.write("**Basic Plan**")
+                st.write("- 100 cards")
+                st.write("- 10 display cases")
+                st.write("- 20 daily searches")
+                st.write("- Advanced analysis")
+                st.write("$9.99/month")
+                
+                if st.button("Upgrade to Basic", key="basic_upgrade"):
+                    try:
+                        session = payment_service.create_checkout_session(
+                            st.session_state.uid,
+                            'basic'
+                        )
+                        st.markdown(f"[Click here to complete your payment]({session.url})")
+                    except Exception as e:
+                        st.error(f"Error creating checkout session: {str(e)}")
+
+            with col2:
+                st.write("**Premium Plan**")
+                st.write("- Unlimited cards")
+                st.write("- Unlimited display cases")
+                st.write("- Unlimited searches")
+                st.write("- All features")
+                st.write("$19.99/month")
+                
+                if st.button("Upgrade to Premium", key="premium_upgrade"):
+                    try:
+                        session = payment_service.create_checkout_session(
+                            st.session_state.uid,
+                            'premium'
+                        )
+                        st.markdown(f"[Click here to complete your payment]({session.url})")
+                    except Exception as e:
+                        st.error(f"Error creating checkout session: {str(e)}")
+
+        # Manage subscription for paid plan users
         else:
-            st.warning("No payment history available")
+            st.subheader("Manage Subscription")
+            
+            if st.button("Cancel Subscription"):
+                try:
+                    payment_service.cancel_subscription(st.session_state.uid)
+                    st.success("Your subscription has been cancelled")
+                    st.experimental_rerun()
+                except Exception as e:
+                    st.error(f"Error cancelling subscription: {str(e)}")
+
+    except Exception as e:
+        st.error(f"An error occurred: {str(e)}")
+        st.stop()
 
 def main():
     # Initialize session state for user if not exists

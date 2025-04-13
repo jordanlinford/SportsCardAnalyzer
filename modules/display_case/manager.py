@@ -7,7 +7,10 @@ import ast
 import json
 import base64
 from ..core.firebase_manager import FirebaseManager
+from ..core.models import DisplayCase, Card
 import streamlit as st
+import logging
+import re
 
 class DisplayCaseManager:
     def __init__(self, uid: str, collection: Union[pd.DataFrame, List[Dict]]):
@@ -16,30 +19,37 @@ class DisplayCaseManager:
         self.display_cases = {}
         self.last_refresh_time = None
         self.db = DatabaseService.get_instance()  # Initialize the database service
+        self.logger = logging.getLogger(__name__)
+        self.firebase_manager = FirebaseManager.get_instance()  # Get FirebaseManager instance
         
-    def load_display_cases(self) -> List[Dict]:
+    @staticmethod
+    @st.cache_data(ttl=300)  # Cache for 5 minutes
+    def load_display_cases(uid: str, collection: Union[pd.DataFrame, List[Dict]]) -> List[DisplayCase]:
         """
         Load all display cases from Firebase.
         
+        Args:
+            uid (str): User ID
+            collection (Union[pd.DataFrame, List[Dict]]): User's card collection
+            
         Returns:
-            List[Dict]: List of display cases
+            List[DisplayCase]: List of display cases
         """
-        print("\n=== Loading Display Cases ===")
-        if not self.db:
-            print("[ERROR] Database service not initialized")
-            return []
+        logger = logging.getLogger(__name__)
+        logger.debug("Loading display cases")
         
         try:
             # Get the Firebase client
-            db = FirebaseManager.get_firestore_client()
+            firebase_manager = FirebaseManager.get_instance()
+            db = firebase_manager.db
             if not db:
-                print("[ERROR] Failed to get Firebase client")
+                logger.error("Failed to get Firebase client")
                 return []
             
             # Get the user document reference
-            user_doc = db.collection('users').document(self.uid)
+            user_doc = db.collection('users').document(uid)
             if not user_doc.get().exists:
-                print("[ERROR] User document not found")
+                logger.error("User document not found")
                 return []
             
             # Get the display cases subcollection
@@ -49,6 +59,7 @@ class DisplayCaseManager:
             for case in display_cases:
                 case_data = case.to_dict()
                 case_data['id'] = case.id
+                case_data['user_id'] = uid
                 
                 # Ensure cards key exists
                 if 'cards' not in case_data:
@@ -61,7 +72,10 @@ class DisplayCaseManager:
                         card_id = card.get('id')
                         if card_id:
                             # Find the card in the collection
-                            matching_card = next((c for c in self.collection if c.get('id') == card_id), None)
+                            if isinstance(collection, pd.DataFrame):
+                                matching_card = collection[collection['id'] == card_id].iloc[0].to_dict() if not collection.empty else None
+                            else:
+                                matching_card = next((c for c in collection if c.get('id') == card_id), None)
                             if matching_card:
                                 card['photo'] = matching_card.get('photo')
                 
@@ -69,64 +83,42 @@ class DisplayCaseManager:
                 if 'total_value' not in case_data:
                     case_data['total_value'] = sum(card.get('value', 0) for card in case_data['cards'])
                 
-                cases.append(case_data)
+                # Create DisplayCase instance
+                display_case = DisplayCase(**case_data)
+                cases.append(display_case)
             
-            print(f"Loaded {len(cases)} display cases")
+            logger.info(f"Successfully loaded {len(cases)} display cases")
             return cases
             
         except Exception as e:
-            print(f"[ERROR] Failed to load display cases: {str(e)}")
-            print(traceback.format_exc())
+            logger.error(f"Failed to load display cases: {str(e)}")
+            logger.error(traceback.format_exc())
             return []
 
-    def _normalize_tags(self, tags: Union[str, List[str]]) -> List[str]:
+    def _normalize_tags(self, tags: List[str]) -> List[str]:
         """Normalize tags to a consistent format"""
-        try:
-            if not tags:
-                return []
-            
-            # Handle string input
-            if isinstance(tags, str):
-                # Try to parse as JSON if it looks like a JSON string
-                if tags.strip().startswith('[') and tags.strip().endswith(']'):
-                    try:
-                        tags = json.loads(tags)
-                    except json.JSONDecodeError:
-                        # If not valid JSON, split by comma
-                        tags = [tag.strip() for tag in tags.split(',')]
-                else:
-                    # Split by comma if not JSON
-                    tags = [tag.strip() for tag in tags.split(',')]
-            
-            # Ensure we have a list
-            if not isinstance(tags, list):
-                tags = [tags]
-            
-            # Process each tag
-            normalized_tags = []
-            for tag in tags:
-                if not tag:  # Skip empty tags
-                    continue
-                
-                # Handle nested lists
-                if isinstance(tag, list):
-                    normalized_tags.extend(self._normalize_tags(tag))
-                    continue
-                
-                # Convert to string and clean
-                tag = str(tag).strip().lower()
-                if tag:  # Only add non-empty tags
-                    normalized_tags.append(tag)
-            
-            # Remove duplicates while preserving order
-            seen = set()
-            return [x for x in normalized_tags if not (x in seen or seen.add(x))]
-            
-        except Exception as e:
-            print(f"Error normalizing tags: {str(e)}")
-            print(f"Tags input: {tags}")
-            print(f"Traceback: {traceback.format_exc()}")
+        print("\n=== Normalizing Tags ===")
+        print(f"Input tags: {tags}")
+        
+        if not tags:
+            print("No tags to normalize")
             return []
+            
+        normalized = []
+        for tag in tags:
+            if isinstance(tag, str):
+                # Convert to lowercase and remove special characters
+                tag = tag.lower().strip()
+                tag = re.sub(r'[^a-z0-9\s]', '', tag)
+                print(f"Normalized tag: '{tag}'")
+                if tag:
+                    normalized.append(tag)
+            else:
+                print(f"Skipping non-string tag: {tag}")
+                
+        result = sorted(list(set(normalized)))
+        print(f"Final normalized tags: {result}")
+        return result
 
     def _validate_collection(self) -> bool:
         """
@@ -233,7 +225,16 @@ class DisplayCaseManager:
             print("[ERROR] Collection validation failed")
             return []
         
-        normalized_filter_tags = set(t.lower().strip() for t in tags if t and not pd.isna(t))
+        # Normalize filter tags
+        normalized_filter_tags = set()
+        for t in tags:
+            if t and not pd.isna(t):
+                normalized = str(t).lower().strip()
+                normalized = re.sub(r'[^a-z0-9\s]', '', normalized)
+                if normalized:
+                    normalized_filter_tags.add(normalized)
+                    print(f"Added normalized filter tag: '{normalized}'")
+        
         print(f"Normalized filter tags: {normalized_filter_tags}")
         
         if not normalized_filter_tags:
@@ -249,12 +250,50 @@ class DisplayCaseManager:
                 # Generate a consistent ID for the card
                 card_id = f"{card.get('player_name', '')}_{card.get('year', '')}_{card.get('card_set', '')}_{card.get('card_number', '')}".replace(" ", "_").lower()
                 card['id'] = card_id
-                card_tags = self._normalize_tags(card.get('tags', []))
-                print(f"Card {idx} tags: {card_tags}")
-                if any(tag in card_tags for tag in normalized_filter_tags):
+                
+                # Get and normalize card tags
+                raw_tags = card.get('tags', [])
+                print(f"\nCard {idx} raw tags: {raw_tags}")
+                print(f"Card {idx} raw tags type: {type(raw_tags)}")
+                
+                # Handle different tag formats
+                if isinstance(raw_tags, str):
+                    try:
+                        # Try to parse as JSON/list
+                        parsed = ast.literal_eval(raw_tags)
+                        if isinstance(parsed, list):
+                            raw_tags = parsed
+                        else:
+                            raw_tags = [t.strip() for t in raw_tags.split(',')]
+                        print(f"Card {idx} parsed tags: {raw_tags}")
+                    except:
+                        raw_tags = [t.strip() for t in raw_tags.split(',')]
+                        print(f"Card {idx} split tags: {raw_tags}")
+                elif not isinstance(raw_tags, list):
+                    print(f"Card {idx} invalid tags format: {raw_tags}")
+                    raw_tags = []
+                
+                # Normalize each tag
+                card_tags = set()
+                for tag in raw_tags:
+                    if tag and not pd.isna(tag):
+                        normalized = str(tag).lower().strip()
+                        normalized = re.sub(r'[^a-z0-9\s]', '', normalized)
+                        if normalized:
+                            card_tags.add(normalized)
+                            print(f"Card {idx} normalized tag: '{normalized}'")
+                
+                print(f"Card {idx} all normalized tags: {card_tags}")
+                
+                # Check for matches
+                matches = normalized_filter_tags.intersection(card_tags)
+                if matches:
+                    print(f"Card {idx} matches with tags: {matches}")
                     if self._validate_card_photo(card):
                         matching_cards.append(card)
                         print(f"Added card {idx} to matches")
+                else:
+                    print(f"Card {idx} does not match any filter tags")
         else:
             print("[DEBUG] Processing list collection")
             for idx, card in enumerate(self.collection):
@@ -263,101 +302,187 @@ class DisplayCaseManager:
                 # Generate a consistent ID for the card
                 card_id = f"{card.get('player_name', '')}_{card.get('year', '')}_{card.get('card_set', '')}_{card.get('card_number', '')}".replace(" ", "_").lower()
                 card['id'] = card_id
-                card_tags = self._normalize_tags(card.get('tags', []))
-                print(f"Card {idx} tags: {card_tags}")
-                if any(tag in card_tags for tag in normalized_filter_tags):
+                
+                # Get and normalize card tags
+                raw_tags = card.get('tags', [])
+                print(f"\nCard {idx} raw tags: {raw_tags}")
+                print(f"Card {idx} raw tags type: {type(raw_tags)}")
+                
+                # Handle different tag formats
+                if isinstance(raw_tags, str):
+                    try:
+                        # Try to parse as JSON/list
+                        parsed = ast.literal_eval(raw_tags)
+                        if isinstance(parsed, list):
+                            raw_tags = parsed
+                        else:
+                            raw_tags = [t.strip() for t in raw_tags.split(',')]
+                        print(f"Card {idx} parsed tags: {raw_tags}")
+                    except:
+                        raw_tags = [t.strip() for t in raw_tags.split(',')]
+                        print(f"Card {idx} split tags: {raw_tags}")
+                elif not isinstance(raw_tags, list):
+                    print(f"Card {idx} invalid tags format: {raw_tags}")
+                    raw_tags = []
+                
+                # Normalize each tag
+                card_tags = set()
+                for tag in raw_tags:
+                    if tag and not pd.isna(tag):
+                        normalized = str(tag).lower().strip()
+                        normalized = re.sub(r'[^a-z0-9\s]', '', normalized)
+                        if normalized:
+                            card_tags.add(normalized)
+                            print(f"Card {idx} normalized tag: '{normalized}'")
+                
+                print(f"Card {idx} all normalized tags: {card_tags}")
+                
+                # Check for matches
+                matches = normalized_filter_tags.intersection(card_tags)
+                if matches:
+                    print(f"Card {idx} matches with tags: {matches}")
                     if self._validate_card_photo(card):
                         matching_cards.append(card)
                         print(f"Added card {idx} to matches")
+                else:
+                    print(f"Card {idx} does not match any filter tags")
         
         print(f"Found {len(matching_cards)} matching cards")
         return matching_cards
 
-    def create_display_case(self, name: str, description: str, tags: List[str]) -> bool:
-        """Create a new display case with optimized data storage"""
+    def create_display_case(self, name: str, description: Optional[str] = None, tags: List[str] = None, is_public: bool = False) -> Optional[DisplayCase]:
+        """
+        Create a new display case.
+        
+        Args:
+            name (str): Name of the display case
+            description (Optional[str]): Description of the display case
+            tags (List[str]): List of tags for the display case
+            is_public (bool): Whether the display case is public
+            
+        Returns:
+            Optional[DisplayCase]: Created display case or None if failed
+        """
         try:
-            print(f"\n=== Creating Display Case ===")
+            print("\n=== Creating Display Case ===")
             print(f"Name: {name}")
             print(f"Tags: {tags}")
             
-            if not self._validate_collection():
-                print("[ERROR] Invalid collection")
-                return False
-            
-            # Normalize tags
-            normalized_tags = self._normalize_tags(tags)
-            if not normalized_tags:
-                print("[ERROR] No valid tags provided")
-                return False
-            
             # Filter cards by tags
-            filtered_cards = self._filter_cards_by_tags(normalized_tags)
-            if not filtered_cards:
-                print("[ERROR] No cards found matching the tags")
-                return False
+            filtered_cards = self._filter_cards_by_tags(tags or [])
+            print(f"Found {len(filtered_cards)} matching cards")
             
-            # Optimize card data for storage
-            optimized_cards = []
-            for card in filtered_cards:
-                try:
-                    optimized_card = {
-                        'id': card.get('id', ''),
-                        'player_name': card.get('player_name', ''),
-                        'year': card.get('year', ''),
-                        'set_name': card.get('set_name', ''),
-                        'card_number': card.get('card_number', ''),
-                        'current_value': card.get('current_value', 0),
-                        'grade': card.get('grade', ''),
-                        'tags': card.get('tags', []),
-                        'photo': card.get('photo', '')  # Include the photo field
-                    }
-                    optimized_cards.append(optimized_card)
-                except Exception as e:
-                    print(f"Error optimizing card data: {str(e)}")
-                    continue
+            # Create display case instance
+            display_case = DisplayCase(
+                name=name,
+                description=description,
+                user_id=self.uid,
+                tags=tags or [],
+                cards=filtered_cards,
+                total_value=sum(self._safe_get_card_value(card) for card in filtered_cards),
+                is_public=is_public,
+                created_at=datetime.now(),
+                updated_at=datetime.now()
+            )
             
-            # Create display case with optimized data
-            display_case = {
-                'name': name,
-                'description': description,
-                'tags': normalized_tags,
-                'cards': optimized_cards,
-                'total_value': sum(card.get('current_value', 0) for card in filtered_cards),
-                'created_at': datetime.now().isoformat(),
-                'updated_at': datetime.now().isoformat()
-            }
-            
-            # Get the Firebase client
-            db = FirebaseManager.get_firestore_client()
+            # Save to Firebase
+            db = self.firebase_manager.db
             if not db:
-                print("ERROR: Firebase client not initialized")
-                return False
-                
+                print("[ERROR] Failed to get Firebase client")
+                return None
+            
             # Get the user document reference
-            user_ref = db.collection('users').document(self.uid)
+            user_doc = db.collection('users').document(self.uid)
+            if not user_doc.get().exists:
+                print("[ERROR] User document not found")
+                return None
             
-            # Get the display cases subcollection
-            display_cases_ref = user_ref.collection('display_cases')
+            # Add to display cases subcollection
+            display_case_doc = user_doc.collection('display_cases').document()
+            display_case.id = display_case_doc.id
+            display_case_doc.set(display_case.to_dict())
             
-            # Generate a safe document ID
-            safe_doc_id = name.lower().replace(' ', '_').replace('/', '_').replace('\\', '_')
+            # Clear the cache to ensure the display cases are reloaded
+            st.cache_data.clear()
             
-            # Save the display case document
-            try:
-                display_cases_ref.document(safe_doc_id).set(display_case)
-                print(f"Successfully created display case: {name}")
-                
-                # Update local state
-                self.display_cases[safe_doc_id] = display_case
-                return True
-            except Exception as e:
-                print(f"Error saving display case to Firebase: {str(e)}")
-                print(f"Traceback: {traceback.format_exc()}")
-                return False
+            print(f"Successfully created display case with {len(filtered_cards)} cards")
+            return display_case
             
         except Exception as e:
-            print(f"Error creating display case: {str(e)}")
-            print(f"Traceback: {traceback.format_exc()}")
+            print(f"[ERROR] Failed to create display case: {str(e)}")
+            print(traceback.format_exc())
+            return None
+
+    def update_display_case(self, display_case: DisplayCase) -> bool:
+        """
+        Update an existing display case.
+        
+        Args:
+            display_case (DisplayCase): Display case to update
+            
+        Returns:
+            bool: True if successful, False otherwise
+        """
+        try:
+            # Update timestamps
+            display_case.updated_at = datetime.now()
+            
+            # Save to Firebase
+            db = self.firebase_manager.db
+            if not db:
+                print("[ERROR] Failed to get Firebase client")
+                return False
+            
+            # Get the user document reference
+            user_doc = db.collection('users').document(self.uid)
+            if not user_doc.get().exists:
+                print("[ERROR] User document not found")
+                return False
+            
+            # Update display case
+            display_case_doc = user_doc.collection('display_cases').document(display_case.id)
+            display_case_doc.set(display_case.to_dict())
+            
+            return True
+            
+        except Exception as e:
+            print(f"[ERROR] Failed to update display case: {str(e)}")
+            print(traceback.format_exc())
+            return False
+
+    def delete_display_case(self, case_id: str) -> bool:
+        """
+        Delete a display case.
+        
+        Args:
+            case_id (str): ID of the display case to delete
+            
+        Returns:
+            bool: True if successful, False otherwise
+        """
+        try:
+            # Get Firebase client
+            db = self.firebase_manager.db
+            if not db:
+                print("Error: Firestore client not initialized")
+                return False
+            
+            # Get the user document reference
+            user_doc = db.collection('users').document(self.uid)
+            if not user_doc.get().exists:
+                print("Error: User document not found")
+                return False
+            
+            # Delete display case
+            display_case_doc = user_doc.collection('display_cases').document(case_id)
+            display_case_doc.delete()
+            
+            # Clear the cache to ensure the display cases are reloaded
+            st.cache_data.clear()
+            
+            return True
+        except Exception as e:
+            print(f"Error deleting display case: {str(e)}")
             return False
 
     def save_display_cases(self) -> bool:
@@ -453,130 +578,81 @@ class DisplayCaseManager:
             print(f"Traceback: {traceback.format_exc()}")
             return []
         
-    def delete_display_case(self, case_name: str) -> bool:
-        """Delete a display case"""
-        try:
-            print(f"\n=== Deleting Display Case ===")
-            print(f"Case name: {case_name}")
-            
-            # Get the Firebase client
-            db = FirebaseManager.get_firestore_client()
-            if not db:
-                print("ERROR: Firebase client not initialized")
-                return False
-                
-            # Get the user document reference
-            user_ref = db.collection('users').document(self.uid)
-            
-            # Get the display cases subcollection
-            display_cases_ref = user_ref.collection('display_cases')
-            
-            # Generate a safe document ID
-            safe_doc_id = case_name.lower().replace(' ', '_').replace('/', '_').replace('\\', '_')
-            
-            # Delete the display case document
-            try:
-                display_cases_ref.document(safe_doc_id).delete()
-                print(f"Successfully deleted display case: {case_name}")
-                
-                # Update local state
-                if safe_doc_id in self.display_cases:
-                    del self.display_cases[safe_doc_id]
-                return True
-            except Exception as e:
-                print(f"Error deleting display case from Firebase: {str(e)}")
-                print(f"Traceback: {traceback.format_exc()}")
-                return False
-            
-        except Exception as e:
-            print(f"Error deleting display case: {str(e)}")
-            print(f"Traceback: {traceback.format_exc()}")
-            return False
-
-    def get_display_case(self, name: str) -> Optional[Dict]:
+    def get_display_case(self, name: str) -> Optional[DisplayCase]:
         """Get a specific display case by name, with refreshed card data"""
         if name in self.display_cases:
             display_case = self.display_cases[name]
             # Refresh card data from current collection
-            filtered_cards = self._filter_cards_by_tags(display_case['tags'])
-            display_case['cards'] = filtered_cards
-            display_case['total_value'] = sum(card.get('current_value', 0) for card in filtered_cards)
+            filtered_cards = self._filter_cards_by_tags(display_case.tags)
+            display_case.cards = filtered_cards
+            display_case.total_value = sum(self._safe_get_card_value(card) for card in filtered_cards)
             return display_case
         return None
         
-    def update_display_case(self, name: str, updated_case: Dict) -> bool:
-        """Update an existing display case"""
-        if name not in self.display_cases:
-            print(f"Display case '{name}' not found")
-            return False
+    def refresh_display_case(self, case_id: str) -> bool:
+        """
+        Refresh a display case with current collection data.
+        
+        Args:
+            case_id (str): ID of the display case to refresh
             
-        # Update the display case
-        self.display_cases[name] = updated_case
-        
-        # Save the display cases
-        return self.save_display_cases()
-        
-    def refresh_display_case(self, case_name: str) -> bool:
-        """Refresh a display case with current collection data"""
+        Returns:
+            bool: True if successful, False otherwise
+        """
         try:
-            print(f"\n=== Refreshing Display Case ===")
-            print(f"Case name: {case_name}")
+            print("\n=== Refreshing Display Case ===")
+            print(f"Case ID: {case_id}")
             
-            if not self._validate_collection():
-                print("[ERROR] Invalid collection")
-                return False
-            
-            # Get the Firebase client
-            db = FirebaseManager.get_firestore_client()
+            # Get Firebase client
+            db = self.firebase_manager.db
             if not db:
-                print("ERROR: Firebase client not initialized")
+                print("Error: Firestore client not initialized")
                 return False
-                
+            
             # Get the user document reference
-            user_ref = db.collection('users').document(self.uid)
-            
-            # Get the display cases subcollection
-            display_cases_ref = user_ref.collection('display_cases')
-            
-            # Generate a safe document ID
-            safe_doc_id = case_name.lower().replace(' ', '_').replace('/', '_').replace('\\', '_')
-            
-            # Get the current display case
-            case_doc = display_cases_ref.document(safe_doc_id).get()
-            if not case_doc.exists:
-                print(f"[ERROR] Display case {case_name} not found")
+            user_doc = db.collection('users').document(self.uid)
+            if not user_doc.get().exists:
+                print("Error: User document not found")
                 return False
-                
-            case_data = case_doc.to_dict()
+            
+            # Get the display case document
+            display_case_doc = user_doc.collection('display_cases').document(case_id)
+            display_case = display_case_doc.get()
+            
+            if not display_case.exists:
+                print("Error: Display case not found")
+                return False
+            
+            # Get current case data
+            case_data = display_case.to_dict()
             tags = case_data.get('tags', [])
+            
+            print(f"Current tags: {tags}")
             
             # Filter cards by tags using current collection
             filtered_cards = self._filter_cards_by_tags(tags)
-            if not filtered_cards:
-                print("[ERROR] No cards found matching the tags")
-                return False
+            print(f"Found {len(filtered_cards)} matching cards after refresh")
             
             # Update the display case with current cards
             case_data['cards'] = filtered_cards
-            case_data['total_value'] = sum(card.get('value', 0) for card in filtered_cards)
+            case_data['total_value'] = sum(self._safe_get_card_value(card) for card in filtered_cards)
             case_data['updated_at'] = datetime.now().isoformat()
             
             # Save the updated display case
-            try:
-                display_cases_ref.document(safe_doc_id).set(case_data)
-                print(f"Successfully refreshed display case: {case_name}")
-                return True
-            except Exception as e:
-                print(f"Error saving refreshed display case to Firebase: {str(e)}")
-                print(f"Traceback: {traceback.format_exc()}")
-                return False
+            display_case_doc.set(case_data)
+            
+            # Clear the cache to ensure the display cases are reloaded
+            st.cache_data.clear()
+            
+            print("Successfully refreshed display case")
+            return True
             
         except Exception as e:
             print(f"Error refreshing display case: {str(e)}")
-            print(f"Traceback: {traceback.format_exc()}")
+            print(traceback.format_exc())
             return False
-        
-    def create_smart_display_case(self, name: str, description: str, tag_patterns: List[str]) -> Dict:
+
+    def create_smart_display_case(self, name: str, description: str, tag_patterns: List[str]) -> Optional[DisplayCase]:
         """Create a display case based on smart tag patterns"""
         try:
             print(f"\n=== Creating Smart Display Case ===")
@@ -614,18 +690,20 @@ class DisplayCaseManager:
                 processed_cards.append(processed_card)
             
             # Calculate total value
-            total_value = sum(float(card.get('current_value', 0)) for card in processed_cards)
+            total_value = sum(self._safe_get_card_value(card) for card in processed_cards)
             
             # Create display case
-            display_case = {
-                'name': name,
-                'description': description,
-                'tags': normalized_patterns,
-                'cards': processed_cards,
-                'total_value': total_value,
-                'created_date': datetime.now().isoformat(),
-                'is_smart': True  # Mark as smart display case
-            }
+            display_case = DisplayCase(
+                name=name,
+                description=description,
+                user_id=self.uid,
+                tags=normalized_patterns,
+                cards=processed_cards,
+                total_value=total_value,
+                created_at=datetime.now(),
+                updated_at=datetime.now(),
+                is_smart=True  # Mark as smart display case
+            )
             
             # Save to display cases
             self.display_cases[name] = display_case
@@ -653,16 +731,16 @@ class DisplayCaseManager:
             
             # Create a serializable version of the display case
             serializable_case = {
-                'name': display_case.get('name', ''),
-                'description': display_case.get('description', ''),
-                'tags': display_case.get('tags', []),
-                'created_date': display_case.get('created_date', ''),
-                'total_value': display_case.get('total_value', 0.0),
+                'name': display_case.name,
+                'description': display_case.description,
+                'tags': display_case.tags,
+                'created_date': display_case.created_at.isoformat(),
+                'total_value': display_case.total_value,
                 'cards': []
             }
             
             # Process cards to ensure they're serializable
-            for card in display_case.get('cards', []):
+            for card in display_case.cards:
                 processed_card = {}
                 for key, value in card.items():
                     if isinstance(value, (str, int, float, bool, list, dict, type(None))):
@@ -706,7 +784,7 @@ class DisplayCaseManager:
             import traceback
             print(f"Traceback: {traceback.format_exc()}")
 
-    def create_simple_display_case(self, name: str, tag: str) -> Union[Dict, None]:
+    def create_simple_display_case(self, name: str, tag: str) -> Optional[DisplayCase]:
         try:
             print(f"\n[DEBUG] === Creating Simple Display Case ===")
             print(f"[DEBUG] Name: {name}")
@@ -784,14 +862,16 @@ class DisplayCaseManager:
                 return None
 
             # Create display case with enhanced card data
-            display_case = {
-                'name': name,
-                'description': f"Cards tagged with '{tag}'",
-                'tags': [tag],
-                'cards': matching_cards,
-                'total_value': sum(float(card.get('current_value', 0)) for card in matching_cards),
-                'created_date': datetime.now().isoformat()
-            }
+            display_case = DisplayCase(
+                name=name,
+                description=f"Cards tagged with '{tag}'",
+                user_id=self.uid,
+                tags=[tag],
+                cards=matching_cards,
+                total_value=sum(self._safe_get_card_value(card) for card in matching_cards),
+                created_at=datetime.now(),
+                updated_at=datetime.now()
+            )
 
             # Save the display case
             self.display_cases[name] = display_case
@@ -849,7 +929,7 @@ class DisplayCaseManager:
         """Like or unlike a display case"""
         try:
             # Get Firestore client
-            db = FirebaseManager.get_firestore_client()
+            db = self.firebase_manager.db
             if not db:
                 print("Error: Firestore client not initialized")
                 return False
@@ -873,9 +953,9 @@ class DisplayCaseManager:
             # Update local display case
             if case_id in self.display_cases:
                 case = self.display_cases[case_id]
-                likes = case.get('likes', 0)
-                case['likes'] = likes + (1 if like else -1)
-                case['is_liked'] = like
+                likes = case.likes or 0
+                case.likes = likes + (1 if like else -1)
+                case.is_liked = like
             
             return True
         except Exception as e:
@@ -886,7 +966,7 @@ class DisplayCaseManager:
         """Get number of likes and whether current user has liked the case"""
         try:
             # Get Firestore client
-            db = FirebaseManager.get_firestore_client()
+            db = self.firebase_manager.db
             if not db:
                 print("Error: Firestore client not initialized")
                 return 0, False
@@ -908,7 +988,7 @@ class DisplayCaseManager:
         """Add a comment to a display case"""
         try:
             # Get Firestore client
-            db = FirebaseManager.get_firestore_client()
+            db = self.firebase_manager.db
             if not db:
                 print("Error: Firestore client not initialized")
                 return False
@@ -934,7 +1014,7 @@ class DisplayCaseManager:
         """Get all comments for a display case"""
         try:
             # Get Firestore client
-            db = FirebaseManager.get_firestore_client()
+            db = self.firebase_manager.db
             if not db:
                 print("Error: Firestore client not initialized")
                 return []
@@ -956,7 +1036,7 @@ class DisplayCaseManager:
         """Delete a comment from a display case"""
         try:
             # Get Firestore client
-            db = FirebaseManager.get_firestore_client()
+            db = self.firebase_manager.db
             if not db:
                 print("Error: Firestore client not initialized")
                 return False

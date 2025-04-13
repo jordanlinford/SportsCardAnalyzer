@@ -6,12 +6,14 @@ import logging
 from dotenv import load_dotenv
 import time
 from typing import Optional, Dict, Any
+from datetime import datetime
 
 logger = logging.getLogger(__name__)
 
 class FirebaseManager:
     """Manages Firebase initialization and operations."""
     
+    _instance = None
     _initialized = False
     _auth = None
     _db = None
@@ -23,6 +25,143 @@ class FirebaseManager:
     _last_connection_check = 0
     _connection_check_interval = 300  # 5 minutes
     
+    @classmethod
+    def get_instance(cls) -> 'FirebaseManager':
+        """Get singleton instance of FirebaseManager"""
+        if cls._instance is None:
+            cls._instance = cls()
+        return cls._instance
+
+    def __init__(self):
+        """Initialize Firebase connection if not already initialized"""
+        if not FirebaseManager._initialized:
+            self.initialize()
+
+    @classmethod
+    def initialize(cls) -> bool:
+        """Initialize Firebase connection"""
+        try:
+            if cls._initialized:
+                return True
+
+            # Load environment variables
+            load_dotenv()
+
+            # Get credentials from environment variables
+            project_id = os.getenv('FIREBASE_PROJECT_ID')
+            private_key_id = os.getenv('FIREBASE_PRIVATE_KEY_ID')
+            private_key = os.getenv('FIREBASE_PRIVATE_KEY')
+            client_email = os.getenv('FIREBASE_CLIENT_EMAIL')
+            client_id = os.getenv('FIREBASE_CLIENT_ID')
+            client_x509_cert_url = os.getenv('FIREBASE_CLIENT_X509_CERT_URL')
+
+            if not all([project_id, private_key_id, private_key, client_email, client_id, client_x509_cert_url]):
+                logger.error("Missing required Firebase credentials in environment variables")
+                return False
+
+            # Initialize Firebase Admin SDK
+            cred = credentials.Certificate({
+                "type": "service_account",
+                "project_id": project_id,
+                "private_key_id": private_key_id,
+                "private_key": private_key.replace("\\n", "\n"),
+                "client_email": client_email,
+                "client_id": client_id,
+                "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+                "token_uri": "https://oauth2.googleapis.com/token",
+                "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
+                "client_x509_cert_url": client_x509_cert_url
+            })
+
+            try:
+                cls._firebase_app = firebase_admin.get_app()
+                logger.info("Using existing Firebase Admin SDK app")
+            except ValueError:
+                cls._firebase_app = firebase_admin.initialize_app(cred)
+                logger.info("Firebase Admin SDK initialized successfully")
+
+            cls._db = firestore.client()
+            cls._auth = auth.Client(cls._firebase_app)
+            cls._initialized = True
+            logger.info("Firebase initialized successfully")
+            return True
+
+        except Exception as e:
+            logger.error(f"Error initializing Firebase: {str(e)}")
+            return False
+
+    @property
+    def db(self):
+        """Get Firestore database instance"""
+        if not self._initialized:
+            raise RuntimeError("Firebase not initialized")
+        return self._db
+
+    def get_firestore_client(self):
+        """Get Firestore client"""
+        return self.db
+
+    def collection(self, name: str):
+        """Get a collection reference"""
+        return self.db.collection(name)
+
+    def document(self, collection: str, doc_id: str):
+        """Get a document reference"""
+        return self.db.collection(collection).document(doc_id)
+
+    def batch(self):
+        """Get a new write batch"""
+        return self.db.batch()
+
+    def transaction(self):
+        """Get a new transaction"""
+        return self.db.transaction()
+
+    def close(self):
+        """Close Firebase connection"""
+        if self._firebase_app:
+            firebase_admin.delete_app(self._firebase_app)
+            self._initialized = False
+            self._db = None
+            self._firebase_app = None
+            self._auth = None
+
+    @classmethod
+    def check_connection(cls) -> bool:
+        """Check if Firebase connection is active and reconnect if needed"""
+        current_time = time.time()
+        
+        # Only check connection every 5 minutes
+        if current_time - cls._last_connection_check < cls._connection_check_interval:
+            return cls._initialized
+
+        cls._last_connection_check = current_time
+
+        try:
+            if not cls._initialized or not cls._db:
+                return cls.initialize()
+
+            # Try a simple operation to verify connection
+            cls._db.collection('_connection_test').limit(1).get()
+            return True
+
+        except Exception as e:
+            logger.error(f"Firebase connection check failed: {str(e)}")
+            cls._initialized = False
+            return cls.initialize()
+
+    @classmethod
+    def set_current_user(cls, user_data: dict):
+        """Set current user data"""
+        cls._current_user = user_data
+
+    @classmethod
+    def get_current_user_id(cls) -> Optional[str]:
+        """Get current user ID"""
+        if cls._current_user:
+            return cls._current_user.get('localId')
+        return None
+
     @staticmethod
     def _check_connection() -> bool:
         """Check if Firebase connection is still valid."""
@@ -125,37 +264,6 @@ class FirebaseManager:
             return False
     
     @staticmethod
-    def initialize() -> bool:
-        """Initialize Firebase components if not already initialized."""
-        try:
-            if not FirebaseManager._initialized:
-                logger.info("Starting Firebase initialization...")
-                
-                # Load environment variables
-                load_dotenv()
-                
-                # Initialize components in sequence
-                if not FirebaseManager._initialize_firebase_admin():
-                    return False
-                
-                if not FirebaseManager._initialize_firestore():
-                    return False
-                
-                if not FirebaseManager._initialize_firebase_client():
-                    return False
-                
-                FirebaseManager._initialized = True
-                logger.info("Firebase initialized successfully")
-                return True
-                
-            # Check connection if already initialized
-            return FirebaseManager._check_connection()
-            
-        except Exception as e:
-            logger.error(f"Error initializing Firebase: {str(e)}")
-            return False
-    
-    @staticmethod
     def get_firebase_app():
         """Get Firebase Admin SDK app instance."""
         if not FirebaseManager._initialized:
@@ -179,33 +287,6 @@ class FirebaseManager:
     def get_current_user():
         """Get the current authenticated user."""
         return FirebaseManager._current_user
-    
-    @staticmethod
-    def get_user_id():
-        """Get the current user's ID."""
-        if FirebaseManager._current_user:
-            return FirebaseManager._current_user.get('localId')
-        return None
-    
-    @staticmethod
-    def get_firestore_client():
-        """Get Firestore client instance."""
-        try:
-            # Ensure Firebase is initialized
-            if not FirebaseManager.initialize():
-                logger.error("Failed to initialize Firebase")
-                return None
-            
-            # Ensure Firestore client is available
-            if not FirebaseManager._db:
-                logger.error("Firestore client not initialized")
-                return None
-            
-            return FirebaseManager._db
-            
-        except Exception as e:
-            logger.error(f"Error getting Firestore client: {str(e)}")
-            return None
     
     @staticmethod
     def get_collection(collection_name):
@@ -233,72 +314,148 @@ class FirebaseManager:
             logger.error(f"Error accessing collection {collection_name}: {str(e)}")
             return None
     
-    @staticmethod
-    def sign_in(email, password):
-        """Sign in user with email and password."""
+    def sign_in(self, email: str, password: str) -> dict:
+        """Sign in a user with email and password"""
         try:
-            auth = FirebaseManager.get_auth()
-            if not auth:
-                raise RuntimeError("Firebase Auth is not initialized")
-            user = auth.sign_in_with_email_and_password(email, password)
-            FirebaseManager._current_user = user
+            if not self._initialized:
+                raise RuntimeError("Firebase not initialized")
+
+            # Sign in user with Firebase Auth
+            user = auth.get_user_by_email(email)
+            if not user:
+                raise auth.AuthError("User not found")
+
+            # Check if user document exists in Firestore
+            user_doc = self.db.collection('users').document(user.uid).get()
             
-            # Get or create user document in Firestore
-            db = FirebaseManager.get_firestore_client()
-            if db:
-                user_doc = db.collection('users').document(user['localId'])
-                if not user_doc.get().exists:
-                    # Create user document if it doesn't exist
-                    user_doc.set({
-                        'email': email,
-                        'displayName': user.get('displayName', ''),
-                        'created_at': firestore.SERVER_TIMESTAMP,
-                        'last_login': firestore.SERVER_TIMESTAMP
-                    })
-                else:
-                    # Update last login time
-                    user_doc.update({
-                        'last_login': firestore.SERVER_TIMESTAMP
-                    })
-            
-            return user
-        except Exception as e:
-            logger.error(f"Sign in error: {str(e)}")
-            raise
-    
-    @staticmethod
-    def sign_up(email, password, display_name):
-        """Sign up new user with email and password."""
-        try:
-            auth = FirebaseManager.get_auth()
-            if not auth:
-                raise RuntimeError("Firebase Auth is not initialized")
-            user = auth.create_user_with_email_and_password(email, password)
-            FirebaseManager._current_user = user
-            
-            # Update user profile with display name
-            auth.update_profile(user['idToken'], {'displayName': display_name})
-            
-            # Create user document in Firestore
-            db = FirebaseManager.get_firestore_client()
-            if db:
-                user_doc = db.collection('users').document(user['localId'])
-                user_doc.set({
+            # Create user document if it doesn't exist
+            if not user_doc.exists:
+                user_data = {
                     'email': email,
-                    'displayName': display_name,
-                    'created_at': firestore.SERVER_TIMESTAMP,
-                    'last_login': firestore.SERVER_TIMESTAMP,
-                    'preferences': {
-                        'theme': 'light',
-                        'notifications': True
-                    }
+                    'display_name': user.display_name or email.split('@')[0],
+                    'created_at': datetime.now(),
+                    'last_login': datetime.now()
+                }
+                self.db.collection('users').document(user.uid).set(user_data)
+            else:
+                # Update last login
+                self.db.collection('users').document(user.uid).update({
+                    'last_login': datetime.now()
                 })
-            
-            return user
+
+            # Set current user
+            self.set_current_user({
+                'localId': user.uid,
+                'email': user.email,
+                'displayName': user.display_name
+            })
+
+            return {
+                'success': True,
+                'user': {
+                    'uid': user.uid,
+                    'email': user.email,
+                    'display_name': user.display_name
+                }
+            }
+
         except Exception as e:
-            logger.error(f"Sign up error: {str(e)}")
-            raise
-    
+            logger.error(f"Error signing in user: {str(e)}")
+            return {
+                'success': False,
+                'error': str(e)
+            }
+
+    def sign_up(self, email: str, password: str, display_name: str = None) -> dict:
+        """Create a new user with email and password"""
+        try:
+            if not self._initialized:
+                raise RuntimeError("Firebase not initialized")
+
+            # Create user in Firebase Auth
+            user = auth.create_user(
+                email=email,
+                password=password,
+                display_name=display_name or email.split('@')[0]
+            )
+
+            # Create user document in Firestore
+            user_data = {
+                'email': email,
+                'display_name': display_name or email.split('@')[0],
+                'created_at': datetime.now(),
+                'last_login': datetime.now(),
+                'preferences': {
+                    'theme': 'light',
+                    'notifications': True
+                }
+            }
+            self.db.collection('users').document(user.uid).set(user_data)
+
+            # Set current user
+            self.set_current_user({
+                'localId': user.uid,
+                'email': user.email,
+                'displayName': user.display_name
+            })
+
+            return {
+                'success': True,
+                'user': {
+                    'uid': user.uid,
+                    'email': user.email,
+                    'display_name': user.display_name
+                }
+            }
+
+        except Exception as e:
+            logger.error(f"Error creating user: {str(e)}")
+            return {
+                'success': False,
+                'error': str(e)
+            }
+
+    def sign_out(self) -> bool:
+        """Sign out the current user"""
+        try:
+            self._current_user = None
+            return True
+        except Exception as e:
+            logger.error(f"Error signing out user: {str(e)}")
+            return False
+
+    def delete_user(self, uid: str) -> bool:
+        """Delete a user and their data"""
+        try:
+            if not self._initialized:
+                raise RuntimeError("Firebase not initialized")
+
+            # Delete user from Firebase Auth
+            auth.delete_user(uid)
+
+            # Delete user document from Firestore
+            self.db.collection('users').document(uid).delete()
+
+            return True
+
+        except Exception as e:
+            logger.error(f"Error deleting user: {str(e)}")
+            return False
+
+    def update_user(self, uid: str, data: dict) -> bool:
+        """Update user data in Firestore"""
+        try:
+            if not self._initialized:
+                raise RuntimeError("Firebase not initialized")
+
+            # Update user document
+            self.db.collection('users').document(uid).update(data)
+            return True
+
+        except Exception as e:
+            logger.error(f"Error updating user: {str(e)}")
+            return False
+
     @staticmethod
     def sign_in_with_google():
         """Sign in user with Google."""
@@ -309,19 +466,6 @@ class FirebaseManager:
         except Exception as e:
             logger.error(f"Google sign-in error: {str(e)}")
             raise
-    
-    @staticmethod
-    def sign_out():
-        """Sign out current user."""
-        try:
-            auth = FirebaseManager.get_auth()
-            if not auth:
-                raise RuntimeError("Firebase Auth is not initialized")
-            FirebaseManager._current_user = None
-            return True
-        except Exception as e:
-            logger.error(f"Sign out error: {str(e)}")
-            return False
     
     @staticmethod
     def update_user_profile(uid, profile_data):

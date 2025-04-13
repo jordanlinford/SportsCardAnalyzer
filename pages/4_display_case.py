@@ -32,7 +32,12 @@ st.set_page_config(
     page_title="Display Case",
     page_icon="image",
     layout="wide",
-    initial_sidebar_state="expanded"
+    initial_sidebar_state="expanded",
+    menu_items={
+        'Get Help': 'https://github.com/jordanreedlinford/SportsCardAnalyzer-6/issues',
+        'Report a bug': 'https://github.com/jordanreedlinford/SportsCardAnalyzer-6/issues',
+        'About': 'Sports Card Analyzer - Display Case Manager'
+    }
 )
 
 # Apply theme styles
@@ -94,24 +99,9 @@ st.markdown("""
 ThemeManager.apply_theme_styles()
 BrandingComponent.add_branding_styles()
 
-def display_case_grid(display_case):
+def display_case_grid(cards):
     """Display cards in a grid with hover effects"""
-    if not display_case:
-        st.info("No display case selected")
-        return
-
-    # Add refresh button
-    if st.button("🔄 Refresh Display Case"):
-        # Get the display case manager with required parameters
-        uid = st.session_state.uid
-        collection = DatabaseService.get_user_collection(uid)
-        display_case_manager = DisplayCaseManager(uid, collection)
-        # Refresh the display case
-        display_case_manager.refresh_display_case(display_case['name'])
-        st.success("Display case refreshed!")
-        st.rerun()
-
-    if not display_case.get('cards'):
+    if not cards:
         st.info("No cards found in this display case")
         return
 
@@ -175,7 +165,7 @@ def display_case_grid(display_case):
 
     # Display cards in a grid with 4 columns
     cols = st.columns(4)
-    for idx, card in enumerate(display_case['cards']):
+    for idx, card in enumerate(cards):
         col = cols[idx % 4]
         with col:
             # Create card container with hover effect
@@ -184,7 +174,8 @@ def display_case_grid(display_case):
                     <img class="card-image" src="{card.get('photo', 'https://placehold.co/300x400/e6e6e6/666666.png?text=No+Image')}" alt="Card Image">
                     <div class="card-info">
                         <div class="card-title">{card.get('player_name', 'Unknown')}</div>
-                        <div class="card-details">{card.get('year', '')} {card.get('card_set', '')}</div>
+                        <div class="card-details">{card.get('year', '')} {card.get('card_set', '')} #{card.get('card_number', '')}</div>
+                        <div class="card-details">Condition: {card.get('condition', 'Unknown')}</div>
                         <div class="card-value">${card.get('value', 0):,.2f}</div>
                     </div>
                 </div>
@@ -308,41 +299,57 @@ def main():
     tab1, tab2 = st.tabs(["View Display Cases", "Create New Display Case"])
     
     with tab1:
-        # Load display cases
-        display_cases = display_case_manager.load_display_cases()
-        if not display_cases:
-            st.info("No display cases found. Create one to get started!")
-        else:
-            # Display case selection
-            case_names = [case['name'] for case in display_cases]
-            selected_case_name = st.selectbox("Select Display Case", case_names)
+        # Add refresh button
+        if st.button("🔄 Refresh Display Cases", key="refresh_display_cases"):
+            st.cache_data.clear()
+            # Force a rerun to update the display cases
+            st.rerun()
 
-            if selected_case_name:
-                # Get the selected display case
-                selected_case = next((case for case in display_cases if case['name'] == selected_case_name), None)
-                if selected_case:
-                    # Display case details
-                    st.subheader(selected_case['name'])
-                    if selected_case.get('description'):
-                        st.write(selected_case['description'])
-                    
-                    # Add delete button
-                    if st.button("Delete Display Case", type="secondary"):
-                        if display_case_manager.delete_display_case(selected_case_name):
-                            st.success(f"Display case '{selected_case_name}' deleted successfully!")
-                            st.rerun()
-                        else:
-                            st.error("Failed to delete display case")
-                    
-                    # Display cards in the case
-                    if selected_case.get('cards'):
-                        st.write(f"Total Cards: {len(selected_case['cards'])}")
-                        st.write(f"Total Value: ${selected_case.get('total_value', 0):,.2f}")
-                        
-                        # Display cards in a grid
-                        display_case_grid(selected_case)
+        # Display existing display cases
+        display_cases = DisplayCaseManager.load_display_cases(uid, collection)
+        
+        if display_cases:
+            # Create a dropdown to select a display case
+            case_names = [case.name for case in display_cases]
+            selected_case_name = st.selectbox("Select a Display Case", case_names)
+            
+            # Find the selected display case
+            selected_case = next((case for case in display_cases if case.name == selected_case_name), None)
+            
+            if selected_case:
+                # Add refresh button for the selected case
+                if st.button("🔄 Refresh Selected Case", key=f"refresh_{selected_case.id}"):
+                    manager = DisplayCaseManager(uid, collection)
+                    if manager.refresh_display_case(selected_case.id):
+                        st.success("Display case refreshed successfully!")
+                        st.cache_data.clear()
+                        st.rerun()
                     else:
-                        st.info("No cards in this display case yet.")
+                        st.error("Failed to refresh display case")
+
+                # Display case details
+                st.subheader(selected_case.name)
+                if selected_case.description:
+                    st.write(selected_case.description)
+                
+                # Display case stats
+                col1, col2 = st.columns(2)
+                with col1:
+                    st.metric("Total Cards", len(selected_case.cards))
+                with col2:
+                    st.metric("Total Value", f"${selected_case.total_value:,.2f}")
+                
+                # Display cards in a grid
+                display_case_grid(selected_case.cards)
+                
+                # Add delete button
+                if st.button("Delete Display Case", key=f"delete_{selected_case.name}"):
+                    if display_case_manager.delete_display_case(selected_case.id):
+                        st.success("Display case deleted successfully!")
+                        st.cache_data.clear()  # Clear cache after deletion
+                        st.rerun()
+                    else:
+                        st.error("Failed to delete display case")
     
     with tab2:
         create_new_display_case(display_case_manager, collection)

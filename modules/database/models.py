@@ -88,21 +88,40 @@ class Card:
 
     def to_dict(self):
         """Convert card to dictionary format"""
+        # Ensure dates are in ISO format for Firestore
+        purchase_date = self.purchase_date
+        if isinstance(purchase_date, (datetime, date)):
+            purchase_date = purchase_date.isoformat()
+            
+        last_updated = self.last_updated
+        if isinstance(last_updated, (datetime, date)):
+            last_updated = last_updated.isoformat()
+            
+        # Ensure condition is a string value
+        condition = self.condition
+        if isinstance(condition, CardCondition):
+            condition = condition.value
+            
+        # Ensure photo is properly handled
+        photo = self.photo
+        if not photo:
+            photo = "https://placehold.co/300x400/e6e6e6/666666.png?text=No+Card+Image"
+            
         return {
-            'player_name': self.player_name,
-            'year': self.year,
-            'card_set': self.card_set,
-            'card_number': self.card_number,
-            'variation': self.variation,
-            'condition': self.condition if isinstance(self.condition, str) else self.condition.value,
-            'purchase_price': self.purchase_price,
-            'purchase_date': self.purchase_date.strftime('%Y-%m-%d') if isinstance(self.purchase_date, (datetime, date)) else self.purchase_date,
-            'current_value': self.current_value,
-            'last_updated': self.last_updated.strftime('%Y-%m-%d') if isinstance(self.last_updated, (datetime, date)) else self.last_updated,
-            'notes': self.notes,
-            'roi': self.roi,
-            'tags': self.tags,
-            'photo': self.photo
+            'player_name': str(self.player_name),
+            'year': str(self.year),
+            'card_set': str(self.card_set),
+            'card_number': str(self.card_number),
+            'variation': str(self.variation),
+            'condition': condition,
+            'purchase_price': float(self.purchase_price),
+            'purchase_date': purchase_date,
+            'current_value': float(self.current_value),
+            'last_updated': last_updated,
+            'notes': str(self.notes),
+            'roi': float(self.roi),
+            'tags': [str(tag) for tag in self.tags],
+            'photo': photo
         }
 
 @dataclass

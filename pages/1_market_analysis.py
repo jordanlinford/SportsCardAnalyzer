@@ -14,7 +14,6 @@ from modules.ui.components import CardDisplay
 import base64
 import requests
 import re
-from modules.firebase.config import db
 import os
 from modules.database.service import DatabaseService
 from modules.database.models import Card, CardCondition
@@ -1068,11 +1067,10 @@ def load_collection_from_firebase():
         ])
     
     try:
-        user_doc = db.collection('users').document(st.session_state.uid).get()
-        if user_doc.exists:
-            user_data = user_doc.to_dict()
-            if 'collection' in user_data:
-                return pd.DataFrame(user_data['collection'])
+        # Get user data using DatabaseService
+        user_data = DatabaseService.get_user_data(st.session_state.uid)
+        if user_data and 'collection' in user_data:
+            return pd.DataFrame(user_data['collection'])
     except Exception as e:
         st.error(f"Error loading collection: {str(e)}")
     

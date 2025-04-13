@@ -1,69 +1,102 @@
 import stripe
 import os
-from typing import Dict, Optional, Any
+from typing import Dict, Optional, Any, List
 from datetime import datetime, timedelta, timezone
-from modules.database.subscription_db import SubscriptionDB
-from modules.database.schema import UserSubscription, UserUsage, SubscriptionHistory
+from modules.core.models import UserSubscription, UserUsage, SubscriptionHistory
+from modules.core.firebase_manager import FirebaseManager
+import logging
 
 class PaymentService:
     def __init__(self):
         self.stripe = stripe
         self.stripe.api_key = os.getenv('STRIPE_SECRET_KEY')
-        self.db = SubscriptionDB()
+        self.db = FirebaseManager.get_instance()
+        self.logger = logging.getLogger(__name__)
         
-    def create_customer(self, email: str, name: str) -> Dict:
+    def create_customer(self, user_id: str, email: str, name: str = "") -> stripe.Customer:
         """Create a new Stripe customer"""
-        return self.stripe.Customer.create(
-            email=email,
-            name=name
-        )
+        try:
+            # For test users, use a valid test email format
+            if user_id.startswith('test_'):
+                email = f"test_{user_id}@example.com"
+            
+            customer = stripe.Customer.create(
+                email=email,
+                name=name,
+                metadata={
+                    'user_id': user_id
+                }
+            )
+            return customer
+        except Exception as e:
+            self.logger.error(f"Error creating customer: {str(e)}")
+            raise
     
-    def create_subscription(self, customer_id: str, price_id: str) -> Dict:
-        """Create a subscription for a customer"""
-        return self.stripe.Subscription.create(
-            customer=customer_id,
-            items=[{'price': price_id}],
-            payment_behavior='default_incomplete',
-            expand=['latest_invoice.payment_intent']
-        )
+    def create_subscription(self, customer_id: str, price_id: str) -> stripe.Subscription:
+        """Create a new subscription"""
+        try:
+            subscription = stripe.Subscription.create(
+                customer=customer_id,
+                items=[{'price': price_id}],
+                payment_behavior='default_incomplete',
+                payment_settings={'save_default_payment_method': 'on_subscription'},
+                expand=['latest_invoice.payment_intent']
+            )
+            return subscription
+        except Exception as e:
+            self.logger.error(f"Error creating subscription: {str(e)}")
+            raise
     
-    def cancel_subscription(self, subscription_id: str) -> Dict:
+    def cancel_subscription(self, subscription_id: str) -> bool:
         """Cancel a subscription"""
-        return self.stripe.Subscription.modify(
-            subscription_id,
-            cancel_at_period_end=True
-        )
+        try:
+            subscription = stripe.Subscription.retrieve(subscription_id)
+            subscription.delete()
+            return True
+        except Exception as e:
+            self.logger.error(f"Error cancelling subscription: {str(e)}")
+            return False
     
-    def get_subscription_status(self, subscription_id: str) -> Dict:
-        """Get the status of a subscription"""
-        return self.stripe.Subscription.retrieve(subscription_id)
+    def get_subscription(self, subscription_id: str) -> Optional[stripe.Subscription]:
+        """Get subscription details"""
+        try:
+            return stripe.Subscription.retrieve(subscription_id)
+        except Exception as e:
+            self.logger.error(f"Error getting subscription: {str(e)}")
+            return None
     
-    def create_checkout_session(self, price_id: str, customer_id: str, promotion_code: Optional[str] = None) -> Dict:
-        """Create a Stripe Checkout session with optional promo code"""
-        session_params = {
-            'customer': customer_id,
-            'payment_method_types': ['card'],
-            'line_items': [{
-                'price': price_id,
-                'quantity': 1,
-            }],
-            'mode': 'subscription',
-            'success_url': os.getenv('STRIPE_SUCCESS_URL'),
-            'cancel_url': os.getenv('STRIPE_CANCEL_URL'),
-            'allow_promotion_codes': True,  # Enable promo code field in checkout
-        }
-        
-        if promotion_code:
-            # Validate the promotion code first
-            try:
-                promo = self.stripe.PromotionCode.list(code=promotion_code).data[0]
-                session_params['discounts'] = [{
-                    'promotion_code': promo.id
-                }]
-            except (IndexError, stripe.error.InvalidRequestError) as e:
-                raise ValueError(f"Invalid promotion code: {promotion_code}")
-        
-        return self.stripe.checkout.Session.create(**session_params)
+    def create_checkout_session(self, user_id: str, plan: str) -> stripe.checkout.Session:
+        """Create a Stripe checkout session"""
+        try:
+            # For test users, use a valid test email format
+            if user_id.startswith('test_'):
+                email = f"test_{user_id}@example.com"
+            else:
+                email = None  # Will be set by Stripe based on customer
+
+            price_id = os.getenv(f'STRIPE_{plan.upper()}_PLAN_PRICE_ID')
+            if not price_id:
+                raise ValueError(f"Price ID not found for plan: {plan}")
+
+            session = stripe.checkout.Session.create(
+                customer_email=email,
+                payment_method_types=['card'],
+                line_items=[{
+                    'price': price_id,
+                    'quantity': 1,
+                }],
+                mode='subscription',
+                success_url=os.getenv('STRIPE_SUCCESS_URL'),
+                cancel_url=os.getenv('STRIPE_CANCEL_URL'),
+                metadata={
+                    'user_id': user_id,
+                    'plan': plan
+                }
+            )
+            return session
+        except Exception as e:
+            self.logger.error(f"Error creating checkout session: {str(e)}")
+            raise
 
     def verify_payment(self, session_id: str) -> bool:
         """Verify if a payment was successful"""
@@ -83,49 +116,51 @@ class PaymentService:
             subscription_data.get('current_period_end', 0)
         )
         
-        subscription = UserSubscription(
-            user_id=user_id,
-            plan=subscription_data.get('plan', 'free'),
-            stripe_customer_id=subscription_data.get('customer'),
-            stripe_subscription_id=subscription_data.get('subscription'),
-            subscription_status=subscription_data.get('status', 'active'),
-            current_period_end=current_period_end,
-            updated_at=datetime.now(timezone.utc)
-        )
+        subscription_data = {
+            'user_id': user_id,
+            'plan': subscription_data.get('plan', 'free'),
+            'stripe_customer_id': subscription_data.get('customer'),
+            'stripe_subscription_id': subscription_data.get('subscription'),
+            'subscription_status': subscription_data.get('status', 'active'),
+            'current_period_end': current_period_end,
+            'updated_at': datetime.now(timezone.utc)
+        }
         
-        self.db.update_subscription(subscription)
+        self.db.collection('subscriptions').document(user_id).set(subscription_data)
 
         # Record subscription history
-        history = SubscriptionHistory(
-            user_id=user_id,
-            event_type='subscription_updated',
-            plan=subscription.plan,
-            amount=subscription_data.get('amount', 0.0),
-            status=subscription.subscription_status,
-            event_time=datetime.now(timezone.utc),
-            metadata=subscription_data
-        )
-        self.db.add_subscription_history(history)
+        history_data = {
+            'user_id': user_id,
+            'event_type': 'subscription_updated',
+            'plan': subscription_data['plan'],
+            'amount': subscription_data.get('amount', 0.0),
+            'status': subscription_data['subscription_status'],
+            'event_time': datetime.now(timezone.utc),
+            'metadata': subscription_data
+        }
+        self.db.collection('subscription_history').add(history_data)
 
     def check_search_limit(self, user_id: str) -> bool:
         """Check if user has exceeded their daily search limit"""
-        usage = self.db.get_user_usage(user_id)
-        if not usage:
+        usage_doc = self.db.collection('usage').document(user_id).get()
+        if not usage_doc.exists:
             return True
 
+        usage = usage_doc.to_dict()
         now = datetime.now(timezone.utc)
-        last_updated = usage.last_updated.replace(tzinfo=timezone.utc)
+        last_updated = usage['last_updated'].replace(tzinfo=timezone.utc)
         
         # Reset count if last update was yesterday
         if last_updated.date() < now.date():
-            usage.daily_search_count = 0
-            usage.last_updated = now
-            self.db.update_usage(usage)
+            usage['daily_search_count'] = 0
+            usage['last_updated'] = now
+            self.db.collection('usage').document(user_id).set(usage)
             return True
 
-        subscription = self.db.get_user_subscription(user_id)
-        limit = self._get_search_limit(subscription.plan if subscription else 'free')
-        return usage.daily_search_count < limit
+        subscription_doc = self.db.collection('subscriptions').document(user_id).get()
+        plan = subscription_doc.get('plan') if subscription_doc.exists else 'free'
+        limit = self._get_search_limit(plan)
+        return usage['daily_search_count'] < limit
 
     def _get_search_limit(self, plan: str) -> int:
         """Get daily search limit based on subscription plan"""
@@ -164,18 +199,21 @@ class PaymentService:
             promo_codes = self.stripe.PromotionCode.list(code=code, active=True)
             if not promo_codes.data:
                 raise ValueError("Promotion code not found or inactive")
-            
-            promo = promo_codes.data[0]
-            coupon = promo.coupon
-            
-            return {
-                'valid': True,
-                'id': promo.id,
-                'code': promo.code,
-                'amount_off': coupon.amount_off,
-                'percent_off': coupon.percent_off,
-                'duration': coupon.duration,
-                'duration_in_months': coupon.duration_in_months
-            }
-        except stripe.error.StripeError as e:
-            raise ValueError(f"Error validating promotion code: {str(e)}") 
+            return promo_codes.data[0]
+        except Exception as e:
+            self.logger.error(f"Error validating promo code: {str(e)}")
+            raise
+
+    def list_payments(self, customer_id: str) -> List[Dict]:
+        """List customer's payment history"""
+        try:
+            charges = stripe.Charge.list(customer=customer_id)
+            return [{
+                'amount': charge.amount / 100,  # Convert from cents to dollars
+                'currency': charge.currency,
+                'status': charge.status,
+                'created': datetime.fromtimestamp(charge.created)
+            } for charge in charges]
+        except Exception as e:
+            self.logger.error(f"Error listing payments: {str(e)}")
+            return [] 

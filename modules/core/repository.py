@@ -14,14 +14,12 @@ class DocumentNotFoundError(RepositoryError):
     """Raised when a document is not found"""
     pass
 
-class BaseRepository(Generic[T]):
-    """Base repository class for handling CRUD operations"""
-    
-    def __init__(self, collection_name: str, model_class: Type[T]):
+class Repository(Generic[T]):
+    def __init__(self, collection_name: str):
         self.collection_name = collection_name
-        self.model_class = model_class
         self.firebase = FirebaseService()
-        self.logger = logging.getLogger(f"{self.__class__.__name__}")
+        self.logger = logging.getLogger(__name__)
+        self._cache = {}
     
     async def create(self, model: T) -> T:
         """Create a new document"""
@@ -29,6 +27,7 @@ class BaseRepository(Generic[T]):
             data = model.to_dict()
             doc_id = await self.firebase.create_document(self.collection_name, data)
             model.id = doc_id
+            self._add_to_cache(model)
             self.logger.info(f"Created document {doc_id} in {self.collection_name}")
             return model
         except Exception as e:
@@ -38,14 +37,20 @@ class BaseRepository(Generic[T]):
     async def get(self, doc_id: str) -> Optional[T]:
         """Get a document by ID"""
         try:
+            # Check cache first
+            if doc_id in self._cache:
+                return self._cache[doc_id]
+
             data = await self.firebase.get_document(self.collection_name, doc_id)
             if not data:
-                self.logger.warning(f"Document {doc_id} not found in {self.collection_name}")
                 return None
-            return self.model_class.from_dict(data)
+
+            model = self._create_model(data)
+            self._add_to_cache(model)
+            return model
         except Exception as e:
             self.logger.error(f"Error getting document {doc_id} from {self.collection_name}: {str(e)}")
-            raise RepositoryError(f"Failed to get document: {str(e)}")
+            return None
     
     async def update(self, model: T) -> T:
         """Update a document"""
@@ -55,6 +60,7 @@ class BaseRepository(Generic[T]):
             
             data = model.to_dict()
             await self.firebase.update_document(self.collection_name, model.id, data)
+            self._add_to_cache(model)
             self.logger.info(f"Updated document {model.id} in {self.collection_name}")
             return model
         except Exception as e:
@@ -64,21 +70,54 @@ class BaseRepository(Generic[T]):
     async def delete(self, doc_id: str) -> bool:
         """Delete a document"""
         try:
-            result = await self.firebase.delete_document(self.collection_name, doc_id)
-            if result:
-                self.logger.info(f"Deleted document {doc_id} from {self.collection_name}")
-            else:
-                self.logger.warning(f"Document {doc_id} not found in {self.collection_name}")
-            return result
+            await self.firebase.delete_document(self.collection_name, doc_id)
+            self._remove_from_cache(doc_id)
+            self.logger.info(f"Deleted document {doc_id} from {self.collection_name}")
+            return True
         except Exception as e:
             self.logger.error(f"Error deleting document {doc_id} from {self.collection_name}: {str(e)}")
-            raise RepositoryError(f"Failed to delete document: {str(e)}")
+            return False
+    
+    async def list_all(self) -> List[T]:
+        """List all documents"""
+        try:
+            docs = await self.firebase.list_documents(self.collection_name)
+            models = []
+            for doc in docs:
+                try:
+                    model = self._create_model(doc)
+                    models.append(model)
+                    self._add_to_cache(model)
+                except Exception as e:
+                    self.logger.error(f"Error creating model from document: {str(e)}")
+                    continue
+            return models
+        except Exception as e:
+            self.logger.error(f"Error listing documents from {self.collection_name}: {str(e)}")
+            return []
+
+    def _create_model(self, data: Dict) -> T:
+        """Create a model instance from data"""
+        try:
+            return T(**data)
+        except Exception as e:
+            self.logger.error(f"Error creating model from data: {str(e)}")
+            raise RepositoryError(f"Failed to create model: {str(e)}")
+
+    def _add_to_cache(self, model: T) -> None:
+        """Add model to cache"""
+        if model.id:
+            self._cache[model.id] = model
+
+    def _remove_from_cache(self, doc_id: str) -> None:
+        """Remove model from cache"""
+        self._cache.pop(doc_id, None)
     
     async def list(self, filters: Optional[Dict[str, Any]] = None) -> List[T]:
         """List documents with optional filters"""
         try:
             docs = await self.firebase.list_documents(self.collection_name, filters)
-            return [self.model_class.from_dict(doc) for doc in docs]
+            return [self._create_model(doc) for doc in docs]
         except Exception as e:
             self.logger.error(f"Error listing documents in {self.collection_name}: {str(e)}")
             raise RepositoryError(f"Failed to list documents: {str(e)}")

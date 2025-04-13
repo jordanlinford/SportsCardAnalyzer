@@ -11,20 +11,20 @@ import sys
 from modules.core.market_analysis import MarketAnalyzer
 from modules.core.collection_manager import CollectionManager
 from scrapers.ebay_interface import EbayInterface
-from modules.firebase.config import db
-from modules.firebase.user_management import UserManager
-from modules.database import Card, UserPreferences, DatabaseService
-from modules.database.models import CardCondition
+from modules.database.service import DatabaseService
+from modules.database.models import Card, CardCondition
 from modules.ui.collection_display import CardDisplay
 from modules.ui.theme.theme_manager import ThemeManager
 from io import BytesIO
 import json
-from modules.core.card_value_analyzer import CardValueAnalyzer # type: ignore
-from modules.core.firebase_manager import FirebaseManager  # Updated import path
+from modules.core.card_value_analyzer import CardValueAnalyzer
+from modules.core.firebase_manager import FirebaseManager
 from modules.ui.components import CardDisplay
 from modules.ui.theme.theme_manager import ThemeManager
 import os
 from modules.ui.branding import BrandingComponent
+from typing import List, Dict, Any, Union
+import zipfile
 
 # Add the project root directory to the Python path
 project_root = str(Path(__file__).parent.parent)
@@ -636,7 +636,9 @@ def edit_card_form(card_index, card_data):
         with col3:
             # Add delete button
             if st.form_submit_button("Delete Card"):
-                if delete_card(card_index):
+                # Generate card_id from the card data
+                card_id = f"{card_dict['player_name']}_{card_dict['year']}_{card_dict['card_set']}_{card_dict['card_number']}".replace(" ", "_").lower()
+                if delete_card(card_id):
                     st.session_state.editing_card = None
                     st.session_state.editing_data = None
                     st.rerun()
@@ -735,32 +737,8 @@ def load_collection_from_firebase():
             st.error("No user ID found. Please log in again.")
             return []
         
-        # Get the user's cards subcollection reference
-        cards_ref = db.collection('users').document(st.session_state.uid).collection('cards')
-        
-        # Get all card documents
-        card_docs = cards_ref.get()
-        
-        # Convert documents to Card objects
-        collection = []
-        for doc in card_docs:
-            try:
-                card_data = doc.to_dict()
-                if not card_data:
-                    continue
-                    
-                # Ensure required fields are present
-                required_fields = ['player_name', 'year', 'card_set', 'card_number']
-                if not all(field in card_data for field in required_fields):
-                    print(f"Skipping card with missing required fields: {card_data}")
-                    continue
-                    
-                card = Card.from_dict(card_data)
-                collection.append(card)
-            except Exception as e:
-                print(f"Error converting card data to Card object: {str(e)}")
-                print(f"Card data: {card_data}")
-                continue
+        # Get collection using DatabaseService
+        collection = DatabaseService.get_user_collection(st.session_state.uid)
         
         print(f"Successfully loaded {len(collection)} cards from Firebase")
         return collection
@@ -781,47 +759,28 @@ def save_collection_to_firebase():
             print("No cards to save")
             return True
         
-        # Get the user's cards subcollection reference
-        cards_ref = db.collection('users').document(st.session_state.uid).collection('cards')
-        
-        # Delete all existing cards
-        existing_cards = cards_ref.get()
-        for card in existing_cards:
-            card.reference.delete()
-        
-        # Process and save each card
+        # Convert collection to list of Card objects
+        cards = []
         for card in st.session_state.collection:
             try:
-                # Convert card to dictionary if it's a Card object
                 if hasattr(card, 'to_dict'):
                     card_dict = card.to_dict()
                 else:
                     card_dict = card
-                
-                # Ensure required fields are present
-                required_fields = ['player_name', 'year', 'card_set', 'card_number']
-                if not all(field in card_dict for field in required_fields):
-                    print(f"Skipping card with missing required fields: {card_dict}")
-                    continue
-                
-                # Generate a unique ID for the card
-                card_id = f"{card_dict['player_name']}_{card_dict['year']}_{card_dict['card_set']}_{card_dict['card_number']}".replace(" ", "_").lower()
-                
-                # Save the card to the subcollection
-                cards_ref.document(card_id).set(card_dict)
-                
-            except Exception as card_error:
-                print(f"Error processing card: {str(card_error)}")
-                print(f"Card data: {card_dict}")
+                cards.append(Card.from_dict(card_dict))
+            except Exception as e:
+                print(f"Error converting card to Card object: {str(e)}")
                 continue
         
-        # Update the user document's last_updated timestamp
-        db.collection('users').document(st.session_state.uid).update({
-            'last_updated': datetime.now().isoformat()
-        })
+        # Save collection using DatabaseService
+        success = DatabaseService.save_user_collection(st.session_state.uid, cards)
         
-        print(f"Successfully saved {len(st.session_state.collection)} cards to Firebase")
-        return True
+        if success:
+            print(f"Successfully saved {len(cards)} cards to Firebase")
+            return True
+        else:
+            print("Failed to save collection to Firebase")
+            return False
         
     except Exception as e:
         print(f"Error saving collection: {str(e)}")
@@ -1002,42 +961,63 @@ def generate_sample_template():
     
     return output.getvalue()
 
-def delete_card(card_index):
+def delete_card(card_id: str) -> bool:
     """Delete a card from the collection"""
     try:
-        if not st.session_state.collection:
-            st.error("No cards in collection")
+        # Get Firebase client
+        firebase_manager = FirebaseManager.get_instance()
+        if not firebase_manager._initialized:
+            if not firebase_manager.initialize():
+                print("Error: Failed to initialize Firebase")
+                return False
+                
+        db = firebase_manager.db
+        if not db:
+            print("Error: Firestore client not initialized")
+            return False
+
+        # Get the user's cards collection reference
+        cards_ref = db.collection('users').document(st.session_state.uid).collection('cards')
+        
+        # Ensure card_id is a string
+        if not isinstance(card_id, str):
+            card_id = str(card_id)
+        
+        # Delete the card document from Firebase
+        try:
+            doc_ref = cards_ref.document(card_id)
+            doc = doc_ref.get()
+            if doc.exists:
+                doc_ref.delete()
+                print(f"Successfully deleted card {card_id} from Firebase")
+            else:
+                print(f"Card {card_id} not found in Firebase")
+        except Exception as firebase_error:
+            print(f"Error deleting from Firebase: {str(firebase_error)}")
             return False
         
-        # Get the card to delete
-        card = st.session_state.collection[card_index]
-        
-        # Generate the card ID
-        if hasattr(card, 'to_dict'):
-            card_dict = card.to_dict()
-        else:
-            card_dict = card
-        
-        card_id = f"{card_dict['player_name']}_{card_dict['year']}_{card_dict['card_set']}_{card_dict['card_number']}".replace(" ", "_").lower()
-        
-        # Delete the card from the subcollection
-        cards_ref = db.collection('users').document(st.session_state.uid).collection('cards')
-        cards_ref.document(card_id).delete()
-        
         # Remove the card from the local collection
-        st.session_state.collection.pop(card_index)
+        if hasattr(st.session_state, 'collection'):
+            # Find the card in the collection and remove it
+            for i, card in enumerate(st.session_state.collection):
+                # Generate the card's ID to compare
+                if hasattr(card, 'to_dict'):
+                    card_dict = card.to_dict()
+                else:
+                    card_dict = card
+                current_card_id = f"{card_dict['player_name']}_{card_dict['year']}_{card_dict['card_set']}_{card_dict['card_number']}".replace(" ", "_").lower()
+                if current_card_id == card_id:
+                    st.session_state.collection.pop(i)
+                    print(f"Successfully removed card {card_id} from local collection")
+                    break
         
-        # Update the user document's last_updated timestamp
-        db.collection('users').document(st.session_state.uid).update({
-            'last_updated': datetime.now().isoformat()
-        })
+        # Clear the cache to ensure the collection is reloaded
+        st.cache_data.clear()
         
-        st.success("Card deleted successfully!")
         return True
-        
     except Exception as e:
-        st.error(f"Error deleting card: {str(e)}")
-        st.write("Debug: Error traceback:", traceback.format_exc())
+        print(f"Error deleting card: {str(e)}")
+        print(f"Debug: Error traceback: {traceback.format_exc()}")
         return False
 
 def update_card(card_index, updated_data):

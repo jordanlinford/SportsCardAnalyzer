@@ -2,12 +2,15 @@ from typing import Dict, List, Optional
 from datetime import datetime
 from firebase_admin import firestore
 from .models import Card, UserPreferences
-from ..firebase.config import db
+from modules.core.firebase_manager import FirebaseManager
 import pandas as pd
 import base64
 import ast
 import io
 from PIL import Image
+import logging
+
+logger = logging.getLogger(__name__)
 
 class DatabaseService:
     _instance = None
@@ -21,26 +24,54 @@ class DatabaseService:
         
     def __init__(self):
         """Initialize the database service"""
-        self.db = db
+        self.db = None
+        self._initialize_db()
+
+    def _initialize_db(self):
+        """Initialize the database connection"""
+        try:
+            firebase_manager = FirebaseManager.get_instance()
+            if not firebase_manager._initialized:
+                if not firebase_manager.initialize():
+                    logger.error("Failed to initialize Firebase")
+                    return
+            self.db = firebase_manager.db
+        except Exception as e:
+            logger.error(f"Error initializing database: {str(e)}")
+            self.db = None
+
+    def _ensure_db_connection(self) -> bool:
+        """Ensure database connection is active"""
+        if not self.db:
+            self._initialize_db()
+        return self.db is not None
 
     @staticmethod
     def get_user_data(uid: str) -> Optional[Dict]:
         """Get user data from Firestore."""
         try:
-            user_doc = db.collection('users').document(uid).get()
+            service = DatabaseService.get_instance()
+            if not service._ensure_db_connection():
+                logger.error("Database connection not available")
+                return None
+
+            user_doc = service.db.collection('users').document(uid).get()
             if user_doc.exists:
                 return user_doc.to_dict()
             return None
         except Exception as e:
-            print(f"Error getting user data: {str(e)}")
-            import traceback
-            print(f"Traceback: {traceback.format_exc()}")
+            logger.error(f"Error getting user data: {str(e)}")
             return None
 
     @staticmethod
     def save_user_preferences(uid: str, preferences: Dict) -> bool:
         """Save user preferences to Firestore."""
         try:
+            service = DatabaseService.get_instance()
+            if not service._ensure_db_connection():
+                logger.error("Database connection not available")
+                return False
+
             # Ensure numeric values are properly formatted
             formatted_preferences = {
                 'defaultGradingCost': float(preferences.get('defaultGradingCost', 0)),
@@ -49,25 +80,28 @@ class DatabaseService:
             }
             
             # Update the preferences in Firestore
-            db.collection('users').document(uid).update({
+            service.db.collection('users').document(uid).update({
                 'preferences': formatted_preferences,
                 'last_updated': datetime.now().isoformat()
             })
             
-            print(f"Updated preferences for user {uid}: {formatted_preferences}")
+            logger.info(f"Updated preferences for user {uid}: {formatted_preferences}")
             return True
         except Exception as e:
-            print(f"Error saving user preferences: {str(e)}")
-            import traceback
-            print(f"Traceback: {traceback.format_exc()}")
+            logger.error(f"Error saving user preferences: {str(e)}")
             return False
 
     @staticmethod
     def get_user_collection(uid: str) -> List[Card]:
         """Get all cards from the user's collection."""
         try:
+            service = DatabaseService.get_instance()
+            if not service._ensure_db_connection():
+                logger.error("Database connection not available")
+                return []
+
             # Get the user's cards subcollection reference
-            cards_ref = db.collection('users').document(uid).collection('cards')
+            cards_ref = service.db.collection('users').document(uid).collection('cards')
             
             # Get all card documents
             card_docs = cards_ref.get()
@@ -80,25 +114,27 @@ class DatabaseService:
                     card = Card.from_dict(card_data)
                     cards.append(card)
                 except Exception as e:
-                    print(f"Error converting card data to Card object: {str(e)}")
-                    print(f"Card data: {card_data}")
+                    logger.error(f"Error converting card data to Card object: {str(e)}")
                     continue
             
-            print(f"Successfully retrieved {len(cards)} cards from collection")
+            logger.info(f"Successfully retrieved {len(cards)} cards from collection")
             return cards
             
         except Exception as e:
-            print(f"Error in get_user_collection: {str(e)}")
-            import traceback
-            print(f"Traceback: {traceback.format_exc()}")
+            logger.error(f"Error in get_user_collection: {str(e)}")
             return []
 
     @staticmethod
     def save_user_collection(uid: str, cards: List[Card]) -> bool:
         """Save user's card collection to Firestore."""
         try:
+            service = DatabaseService.get_instance()
+            if not service._ensure_db_connection():
+                logger.error("Database connection not available")
+                return False
+
             # Get the user's cards subcollection reference
-            cards_ref = db.collection('users').document(uid).collection('cards')
+            cards_ref = service.db.collection('users').document(uid).collection('cards')
             
             # Delete all existing cards
             existing_cards = cards_ref.get()
@@ -114,50 +150,64 @@ class DatabaseService:
                 cards_ref.document(card_id).set(card.to_dict())
             
             # Update the user's last_updated timestamp
-            user_ref = db.collection('users').document(uid)
+            user_ref = service.db.collection('users').document(uid)
             user_ref.update({'last_updated': datetime.now().isoformat()})
             
-            print(f"Successfully saved {len(cards)} cards to collection")
+            logger.info(f"Successfully saved {len(cards)} cards to collection")
             return True
             
         except Exception as e:
-            print(f"Error in save_user_collection: {str(e)}")
-            import traceback
-            print(f"Traceback: {traceback.format_exc()}")
+            logger.error(f"Error in save_user_collection: {str(e)}")
             return False
 
     @staticmethod
     def add_card_to_collection(uid: str, card: Card) -> bool:
         """Add a card to the user's collection."""
         try:
+            service = DatabaseService.get_instance()
+            if not service._ensure_db_connection():
+                logger.error("Database connection not available")
+                return False
+
             # Get the user's cards subcollection reference
-            cards_ref = db.collection('users').document(uid).collection('cards')
+            cards_ref = service.db.collection('users').document(uid).collection('cards')
             
             # Generate a unique ID for the card based on its attributes
             card_id = f"{card.player_name}_{card.year}_{card.card_set}_{card.card_number}".replace(" ", "_").lower()
             
+            # Convert card to dictionary and log the data
+            card_data = card.to_dict()
+            logger.info(f"Attempting to save card with ID: {card_id}")
+            logger.debug(f"Card data: {card_data}")
+            
             # Add the card to the subcollection
-            cards_ref.document(card_id).set(card.to_dict())
+            cards_ref.document(card_id).set(card_data)
             
             # Update the user's last_updated timestamp
-            user_ref = db.collection('users').document(uid)
+            user_ref = service.db.collection('users').document(uid)
             user_ref.update({'last_updated': datetime.now().isoformat()})
             
-            print(f"Successfully added card to collection: {card_id}")
+            logger.info(f"Successfully added card to collection: {card_id}")
             return True
             
         except Exception as e:
-            print(f"Error in add_card_to_collection: {str(e)}")
+            logger.error(f"Error in add_card_to_collection: {str(e)}")
+            logger.error(f"Card data that failed to save: {card.to_dict() if card else 'No card data'}")
             import traceback
-            print(f"Traceback: {traceback.format_exc()}")
+            logger.error(f"Traceback: {traceback.format_exc()}")
             return False
 
     @staticmethod
     def update_card(uid: str, card: Card) -> bool:
         """Update a card in the user's collection."""
         try:
+            service = DatabaseService.get_instance()
+            if not service._ensure_db_connection():
+                logger.error("Database connection not available")
+                return False
+
             # Get the user's cards subcollection reference
-            cards_ref = db.collection('users').document(uid).collection('cards')
+            cards_ref = service.db.collection('users').document(uid).collection('cards')
             
             # Generate the card ID
             card_id = f"{card.player_name}_{card.year}_{card.card_set}_{card.card_number}".replace(" ", "_").lower()
@@ -166,24 +216,27 @@ class DatabaseService:
             cards_ref.document(card_id).set(card.to_dict())
             
             # Update the user's last_updated timestamp
-            user_ref = db.collection('users').document(uid)
+            user_ref = service.db.collection('users').document(uid)
             user_ref.update({'last_updated': datetime.now().isoformat()})
             
-            print(f"Successfully updated card: {card_id}")
+            logger.info(f"Successfully updated card: {card_id}")
             return True
             
         except Exception as e:
-            print(f"Error in update_card: {str(e)}")
-            import traceback
-            print(f"Traceback: {traceback.format_exc()}")
+            logger.error(f"Error in update_card: {str(e)}")
             return False
 
     @staticmethod
     def delete_card(uid: str, card: Card) -> bool:
         """Delete a card from the user's collection."""
         try:
+            service = DatabaseService.get_instance()
+            if not service._ensure_db_connection():
+                logger.error("Database connection not available")
+                return False
+
             # Get the user's cards subcollection reference
-            cards_ref = db.collection('users').document(uid).collection('cards')
+            cards_ref = service.db.collection('users').document(uid).collection('cards')
             
             # Generate the card ID
             card_id = f"{card.player_name}_{card.year}_{card.card_set}_{card.card_number}".replace(" ", "_").lower()
@@ -191,19 +244,15 @@ class DatabaseService:
             # Delete the card document
             cards_ref.document(card_id).delete()
             
-            # Update the user document metadata
-            user_ref = db.collection('users').document(uid)
-            user_ref.update({
-                'last_updated': datetime.now().isoformat()
-            })
+            # Update the user's last_updated timestamp
+            user_ref = service.db.collection('users').document(uid)
+            user_ref.update({'last_updated': datetime.now().isoformat()})
             
-            print(f"Successfully deleted card {card_id}")
+            logger.info(f"Successfully deleted card: {card_id}")
             return True
             
         except Exception as e:
-            print(f"Error in delete_card: {str(e)}")
-            import traceback
-            print(f"Traceback: {traceback.format_exc()}")
+            logger.error(f"Error in delete_card: {str(e)}")
             return False
 
     @staticmethod
