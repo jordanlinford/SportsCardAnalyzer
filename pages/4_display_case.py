@@ -95,17 +95,100 @@ ThemeManager.apply_theme_styles()
 BrandingComponent.add_branding_styles()
 
 def display_case_grid(display_case):
-    """Display cards in a grid using the CardDisplay component"""
+    """Display cards in a grid with hover effects"""
     if not display_case:
         st.info("No display case selected")
         return
+
+    # Add refresh button
+    if st.button("🔄 Refresh Display Case"):
+        # Get the display case manager with required parameters
+        uid = st.session_state.uid
+        collection = DatabaseService.get_user_collection(uid)
+        display_case_manager = DisplayCaseManager(uid, collection)
+        # Refresh the display case
+        display_case_manager.refresh_display_case(display_case['name'])
+        st.success("Display case refreshed!")
+        st.rerun()
 
     if not display_case.get('cards'):
         st.info("No cards found in this display case")
         return
 
-    # Use the CardDisplay component to show the cards
-    CardDisplay.display_grid(display_case['cards'])
+    # Add custom CSS for hover effects
+    st.markdown("""
+        <style>
+        .card-container {
+            position: relative;
+            width: 100%;
+            margin-bottom: 1rem;
+            border-radius: 8px;
+            overflow: hidden;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .card-image {
+            width: 100%;
+            height: 300px;
+            object-fit: cover;
+            transition: 0.3s;
+        }
+        .card-info {
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0, 0, 0, 0.8);
+            color: white;
+            padding: 1rem;
+            display: none;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            text-align: center;
+            opacity: 0;
+            transition: opacity 0.3s;
+        }
+        .card-container:hover .card-info {
+            display: flex;
+            opacity: 1;
+        }
+        .card-container:hover .card-image {
+            transform: scale(1.05);
+        }
+        .card-title {
+            font-size: 1.2rem;
+            font-weight: bold;
+            margin-bottom: 0.5rem;
+        }
+        .card-details {
+            font-size: 0.9rem;
+            margin-bottom: 0.25rem;
+        }
+        .card-value {
+            font-size: 1rem;
+            font-weight: bold;
+            color: #4CAF50;
+        }
+        </style>
+    """, unsafe_allow_html=True)
+
+    # Display cards in a grid with 4 columns
+    cols = st.columns(4)
+    for idx, card in enumerate(display_case['cards']):
+        col = cols[idx % 4]
+        with col:
+            # Create card container with hover effect
+            st.markdown(f"""
+                <div class="card-container">
+                    <img class="card-image" src="{card.get('photo', 'https://placehold.co/300x400/e6e6e6/666666.png?text=No+Image')}" alt="Card Image">
+                    <div class="card-info">
+                        <div class="card-title">{card.get('player_name', 'Unknown')}</div>
+                        <div class="card-details">{card.get('year', '')} {card.get('card_set', '')}</div>
+                        <div class="card-value">${card.get('value', 0):,.2f}</div>
+                    </div>
+                </div>
+            """, unsafe_allow_html=True)
 
 def create_new_display_case(display_case_manager, collection):
     """Create a new display case"""
@@ -231,29 +314,35 @@ def main():
             st.info("No display cases found. Create one to get started!")
         else:
             # Display case selection
-            case_names = list(display_cases.keys())
-            selected_case = st.selectbox("Select Display Case", case_names)
+            case_names = [case['name'] for case in display_cases]
+            selected_case_name = st.selectbox("Select Display Case", case_names)
 
-            if selected_case:
+            if selected_case_name:
                 # Get the selected display case
-                display_case = display_cases[selected_case]
-                
-                # Display case info
-                st.markdown(f"### {display_case['name']}")
-                st.markdown(f"**Description:** {display_case.get('description', 'No description')}")
-                st.markdown(f"**Total Value:** ${display_case.get('total_value', 0):,.2f}")
-                st.markdown(f"**Number of Cards:** {len(display_case.get('cards', []))}")
-                
-                # Add delete button
-                if st.button("Delete Display Case", type="secondary"):
-                    if display_case_manager.delete_display_case(selected_case):
-                        st.success(f"Display case '{selected_case}' deleted successfully!")
-                        st.rerun()
+                selected_case = next((case for case in display_cases if case['name'] == selected_case_name), None)
+                if selected_case:
+                    # Display case details
+                    st.subheader(selected_case['name'])
+                    if selected_case.get('description'):
+                        st.write(selected_case['description'])
+                    
+                    # Add delete button
+                    if st.button("Delete Display Case", type="secondary"):
+                        if display_case_manager.delete_display_case(selected_case_name):
+                            st.success(f"Display case '{selected_case_name}' deleted successfully!")
+                            st.rerun()
+                        else:
+                            st.error("Failed to delete display case")
+                    
+                    # Display cards in the case
+                    if selected_case.get('cards'):
+                        st.write(f"Total Cards: {len(selected_case['cards'])}")
+                        st.write(f"Total Value: ${selected_case.get('total_value', 0):,.2f}")
+                        
+                        # Display cards in a grid
+                        display_case_grid(selected_case)
                     else:
-                        st.error("Failed to delete display case")
-                
-                # Display the grid
-                display_case_grid(display_case)
+                        st.info("No cards in this display case yet.")
     
     with tab2:
         create_new_display_case(display_case_manager, collection)

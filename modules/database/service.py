@@ -50,7 +50,8 @@ class DatabaseService:
             
             # Update the preferences in Firestore
             db.collection('users').document(uid).update({
-                'preferences': formatted_preferences
+                'preferences': formatted_preferences,
+                'last_updated': datetime.now().isoformat()
             })
             
             print(f"Updated preferences for user {uid}: {formatted_preferences}")
@@ -63,16 +64,31 @@ class DatabaseService:
 
     @staticmethod
     def get_user_collection(uid: str) -> List[Card]:
-        """Get user's card collection from Firestore."""
+        """Get all cards from the user's collection."""
         try:
-            user_doc = db.collection('users').document(uid).get()
-            if user_doc.exists:
-                user_data = user_doc.to_dict()
-                if 'collection' in user_data:
-                    return [Card.from_dict(card_data) for card_data in user_data['collection']]
-            return []
+            # Get the user's cards subcollection reference
+            cards_ref = db.collection('users').document(uid).collection('cards')
+            
+            # Get all card documents
+            card_docs = cards_ref.get()
+            
+            # Convert documents to Card objects
+            cards = []
+            for doc in card_docs:
+                try:
+                    card_data = doc.to_dict()
+                    card = Card.from_dict(card_data)
+                    cards.append(card)
+                except Exception as e:
+                    print(f"Error converting card data to Card object: {str(e)}")
+                    print(f"Card data: {card_data}")
+                    continue
+            
+            print(f"Successfully retrieved {len(cards)} cards from collection")
+            return cards
+            
         except Exception as e:
-            print(f"Error getting user collection: {str(e)}")
+            print(f"Error in get_user_collection: {str(e)}")
             import traceback
             print(f"Traceback: {traceback.format_exc()}")
             return []
@@ -81,96 +97,29 @@ class DatabaseService:
     def save_user_collection(uid: str, cards: List[Card]) -> bool:
         """Save user's card collection to Firestore."""
         try:
-            # Get database service instance for photo processing
-            db_service = DatabaseService.get_instance()
+            # Get the user's cards subcollection reference
+            cards_ref = db.collection('users').document(uid).collection('cards')
             
-            # Convert all cards to a simple dict format that Firestore can handle
-            collection_data = []
+            # Delete all existing cards
+            existing_cards = cards_ref.get()
+            for card in existing_cards:
+                card.reference.delete()
+            
+            # Add all new cards
             for card in cards:
-                try:
-                    # Handle both Card objects and dictionary records
-                    if isinstance(card, dict):
-                        # Process photo data
-                        photo = db_service.process_card_photo(card.get('photo', ''))
-                        
-                        # Convert dictionary record to proper format
-                        card_dict = {
-                            'player_name': str(card.get('player_name', '')),
-                            'year': str(card.get('year', '')),
-                            'card_set': str(card.get('card_set', '')),
-                            'card_number': str(card.get('card_number', '')),
-                            'variation': str(card.get('variation', '')),
-                            'condition': str(card.get('condition', '')),
-                            'purchase_price': float(card.get('purchase_price', 0.0)),
-                            'purchase_date': str(card.get('purchase_date', datetime.now().isoformat())),
-                            'current_value': float(card.get('current_value', 0.0)),
-                            'last_updated': str(card.get('last_updated', datetime.now().isoformat())),
-                            'notes': str(card.get('notes', '')),
-                            'photo': photo,
-                            'roi': float(card.get('roi', 0.0)),
-                            'tags': [str(tag) for tag in card.get('tags', [])]
-                        }
-                    else:
-                        # Process photo data for Card object
-                        photo = db_service.process_card_photo(card.photo if hasattr(card, 'photo') else '')
-                        
-                        # Convert Card object to dict
-                        card_dict = {
-                            'player_name': str(card.player_name),
-                            'year': str(card.year),
-                            'card_set': str(card.card_set),
-                            'card_number': str(card.card_number),
-                            'variation': str(card.variation),
-                            'condition': str(card.condition.value),
-                            'purchase_price': float(card.purchase_price),
-                            'purchase_date': card.purchase_date.isoformat(),
-                            'current_value': float(card.current_value),
-                            'last_updated': card.last_updated.isoformat(),
-                            'notes': str(card.notes),
-                            'photo': photo,
-                            'roi': float(card.roi),
-                            'tags': [str(tag) for tag in card.tags]
-                        }
-                    
-                    collection_data.append(card_dict)
-                except Exception as card_error:
-                    print(f"Error processing card: {str(card_error)}")
-                    import traceback
-                    print(f"Traceback: {traceback.format_exc()}")
-                    continue
-
-            if not collection_data:
-                print("No valid cards to save")
-                return False
-
-            # Save to Firestore
-            user_ref = db.collection('users').document(uid)
-            user_doc = user_ref.get()
-            
-            try:
-                if user_doc.exists:
-                    # Update existing collection
-                    user_ref.update({
-                        'collection': collection_data,
-                        'updated_at': datetime.now().isoformat()
-                    })
-                    print(f"Successfully updated collection with {len(collection_data)} cards")
-                    return True
-                else:
-                    # Create new collection
-                    user_ref.set({
-                        'collection': collection_data,
-                        'created_at': datetime.now().isoformat(),
-                        'updated_at': datetime.now().isoformat()
-                    })
-                    print(f"Successfully created new collection with {len(collection_data)} cards")
-                    return True
-            except Exception as e:
-                print(f"Error saving to Firestore: {str(e)}")
-                import traceback
-                print(f"Traceback: {traceback.format_exc()}")
-                return False
+                # Generate a unique ID for the card based on its attributes
+                card_id = f"{card.player_name}_{card.year}_{card.card_set}_{card.card_number}".replace(" ", "_").lower()
                 
+                # Add the card to the subcollection
+                cards_ref.document(card_id).set(card.to_dict())
+            
+            # Update the user's last_updated timestamp
+            user_ref = db.collection('users').document(uid)
+            user_ref.update({'last_updated': datetime.now().isoformat()})
+            
+            print(f"Successfully saved {len(cards)} cards to collection")
+            return True
+            
         except Exception as e:
             print(f"Error in save_user_collection: {str(e)}")
             import traceback
@@ -179,67 +128,82 @@ class DatabaseService:
 
     @staticmethod
     def add_card_to_collection(uid: str, card: Card) -> bool:
-        """Add a single card to user's collection."""
+        """Add a card to the user's collection."""
         try:
+            # Get the user's cards subcollection reference
+            cards_ref = db.collection('users').document(uid).collection('cards')
+            
+            # Generate a unique ID for the card based on its attributes
+            card_id = f"{card.player_name}_{card.year}_{card.card_set}_{card.card_number}".replace(" ", "_").lower()
+            
+            # Add the card to the subcollection
+            cards_ref.document(card_id).set(card.to_dict())
+            
+            # Update the user's last_updated timestamp
+            user_ref = db.collection('users').document(uid)
+            user_ref.update({'last_updated': datetime.now().isoformat()})
+            
+            print(f"Successfully added card to collection: {card_id}")
+            return True
+            
+        except Exception as e:
+            print(f"Error in add_card_to_collection: {str(e)}")
+            import traceback
+            print(f"Traceback: {traceback.format_exc()}")
+            return False
+
+    @staticmethod
+    def update_card(uid: str, card: Card) -> bool:
+        """Update a card in the user's collection."""
+        try:
+            # Get the user's cards subcollection reference
+            cards_ref = db.collection('users').document(uid).collection('cards')
+            
+            # Generate the card ID
+            card_id = f"{card.player_name}_{card.year}_{card.card_set}_{card.card_number}".replace(" ", "_").lower()
+            
+            # Update the card document
+            cards_ref.document(card_id).set(card.to_dict())
+            
+            # Update the user's last_updated timestamp
+            user_ref = db.collection('users').document(uid)
+            user_ref.update({'last_updated': datetime.now().isoformat()})
+            
+            print(f"Successfully updated card: {card_id}")
+            return True
+            
+        except Exception as e:
+            print(f"Error in update_card: {str(e)}")
+            import traceback
+            print(f"Traceback: {traceback.format_exc()}")
+            return False
+
+    @staticmethod
+    def delete_card(uid: str, card: Card) -> bool:
+        """Delete a card from the user's collection."""
+        try:
+            # Get the user's cards subcollection reference
+            cards_ref = db.collection('users').document(uid).collection('cards')
+            
+            # Generate the card ID
+            card_id = f"{card.player_name}_{card.year}_{card.card_set}_{card.card_number}".replace(" ", "_").lower()
+            
+            # Delete the card document
+            cards_ref.document(card_id).delete()
+            
+            # Update the user document metadata
             user_ref = db.collection('users').document(uid)
             user_ref.update({
-                'collection': firestore.ArrayUnion([card.to_dict()])
+                'last_updated': datetime.now().isoformat()
             })
+            
+            print(f"Successfully deleted card {card_id}")
             return True
+            
         except Exception as e:
-            print(f"Error adding card to collection: {str(e)}")
-            return False
-
-    @staticmethod
-    def update_card_in_collection(uid: str, card: Card) -> bool:
-        """Update a card in user's collection."""
-        try:
-            user_ref = db.collection('users').document(uid)
-            user_doc = user_ref.get()
-            if user_doc.exists:
-                collection = user_doc.to_dict().get('collection', [])
-                updated_collection = []
-                for c in collection:
-                    if (c.get('player_name') == card.player_name and 
-                        c.get('year') == card.year and 
-                        c.get('card_set') == card.card_set and 
-                        c.get('card_number') == card.card_number):
-                        updated_collection.append(card.to_dict())
-                    else:
-                        updated_collection.append(c)
-                
-                user_ref.update({
-                    'collection': updated_collection
-                })
-                return True
-            return False
-        except Exception as e:
-            print(f"Error updating card in collection: {str(e)}")
-            return False
-
-    @staticmethod
-    def delete_card_from_collection(uid: str, card: Card) -> bool:
-        """Delete a card from user's collection."""
-        try:
-            user_ref = db.collection('users').document(uid)
-            user_doc = user_ref.get()
-            if user_doc.exists:
-                collection = user_doc.to_dict().get('collection', [])
-                updated_collection = [
-                    c for c in collection 
-                    if not (c.get('player_name') == card.player_name and 
-                           c.get('year') == card.year and 
-                           c.get('card_set') == card.card_set and 
-                           c.get('card_number') == card.card_number)
-                ]
-                
-                user_ref.update({
-                    'collection': updated_collection
-                })
-                return True
-            return False
-        except Exception as e:
-            print(f"Error deleting card from collection: {str(e)}")
+            print(f"Error in delete_card: {str(e)}")
+            import traceback
+            print(f"Traceback: {traceback.format_exc()}")
             return False
 
     @staticmethod
@@ -315,7 +279,7 @@ class DatabaseService:
                         'display_cases': serializable_cases,
                         'created_at': datetime.now().isoformat(),
                         'updated_at': datetime.now().isoformat(),
-                        'collection': [],  # Initialize empty collection
+                        'last_updated': datetime.now().isoformat(),
                         'preferences': {
                             'display_name': 'User',
                             'theme': 'light',
@@ -337,7 +301,8 @@ class DatabaseService:
                     # Update only the display_cases field
                     user_ref.update({
                         'display_cases': existing_cases,
-                        'updated_at': datetime.now().isoformat()
+                        'updated_at': datetime.now().isoformat(),
+                        'last_updated': datetime.now().isoformat()
                     })
                     print(f"Updated display cases for user {uid}")
                 
@@ -406,7 +371,8 @@ class DatabaseService:
             # Save to Firestore
             db.collection('users').document(uid).update({
                 'display_cases': processed_cases,
-                'updated_at': datetime.now().isoformat()
+                'updated_at': datetime.now().isoformat(),
+                'last_updated': datetime.now().isoformat()
             })
             
             return True
@@ -479,4 +445,61 @@ class DatabaseService:
             
         except Exception as e:
             print(f"Error in process_card_photo: {str(e)}")
-            return "https://placehold.co/300x400/e6e6e6/666666.png?text=Error+Processing+Image" 
+            return "https://placehold.co/300x400/e6e6e6/666666.png?text=Error+Processing+Image"
+
+    @staticmethod
+    def load_user_collection(uid: str) -> List[Card]:
+        """Load user's card collection from Firestore."""
+        try:
+            # Get the user's cards subcollection reference
+            cards_ref = db.collection('users').document(uid).collection('cards')
+            
+            # Get all card documents
+            card_docs = cards_ref.get()
+            
+            # Convert documents to Card objects
+            cards = []
+            for doc in card_docs:
+                try:
+                    card_data = doc.to_dict()
+                    card = Card.from_dict(card_data)
+                    cards.append(card)
+                except Exception as e:
+                    print(f"Error converting card data to Card object: {str(e)}")
+                    print(f"Card data: {card_data}")
+                    continue
+            
+            print(f"Successfully loaded {len(cards)} cards from collection")
+            return cards
+            
+        except Exception as e:
+            print(f"Error in load_user_collection: {str(e)}")
+            import traceback
+            print(f"Traceback: {traceback.format_exc()}")
+            return []
+
+    @staticmethod
+    def remove_card_from_collection(uid: str, card: Card) -> bool:
+        """Remove a card from the user's collection."""
+        try:
+            # Get the user's cards subcollection reference
+            cards_ref = db.collection('users').document(uid).collection('cards')
+            
+            # Generate the card ID
+            card_id = f"{card.player_name}_{card.year}_{card.card_set}_{card.card_number}".replace(" ", "_").lower()
+            
+            # Delete the card document
+            cards_ref.document(card_id).delete()
+            
+            # Update the user's last_updated timestamp
+            user_ref = db.collection('users').document(uid)
+            user_ref.update({'last_updated': datetime.now().isoformat()})
+            
+            print(f"Successfully removed card from collection: {card_id}")
+            return True
+            
+        except Exception as e:
+            print(f"Error in remove_card_from_collection: {str(e)}")
+            import traceback
+            print(f"Traceback: {traceback.format_exc()}")
+            return False 

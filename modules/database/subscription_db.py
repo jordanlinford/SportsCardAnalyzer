@@ -100,4 +100,15 @@ class SubscriptionDB(BaseRepository[UserSubscription]):
         
         usage['display_cases_created'] += 1
         self.update_usage(usage)
-        return usage['display_cases_created'] <= 3  # Free tier limit 
+        return usage['display_cases_created'] <= 3  # Free tier limit
+    
+    def get_user(self, user_id: str) -> Optional[Dict]:
+        """Get user information from Firebase"""
+        try:
+            doc = self.db.collection('users').document(user_id).get()
+            if doc.exists:
+                return doc.to_dict()
+            return None
+        except Exception as e:
+            self.logger.error(f"Error getting user: {str(e)}")
+            return None 

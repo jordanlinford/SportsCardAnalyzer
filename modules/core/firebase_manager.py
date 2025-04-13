@@ -242,6 +242,25 @@ class FirebaseManager:
                 raise RuntimeError("Firebase Auth is not initialized")
             user = auth.sign_in_with_email_and_password(email, password)
             FirebaseManager._current_user = user
+            
+            # Get or create user document in Firestore
+            db = FirebaseManager.get_firestore_client()
+            if db:
+                user_doc = db.collection('users').document(user['localId'])
+                if not user_doc.get().exists:
+                    # Create user document if it doesn't exist
+                    user_doc.set({
+                        'email': email,
+                        'displayName': user.get('displayName', ''),
+                        'created_at': firestore.SERVER_TIMESTAMP,
+                        'last_login': firestore.SERVER_TIMESTAMP
+                    })
+                else:
+                    # Update last login time
+                    user_doc.update({
+                        'last_login': firestore.SERVER_TIMESTAMP
+                    })
+            
             return user
         except Exception as e:
             logger.error(f"Sign in error: {str(e)}")
@@ -256,8 +275,25 @@ class FirebaseManager:
                 raise RuntimeError("Firebase Auth is not initialized")
             user = auth.create_user_with_email_and_password(email, password)
             FirebaseManager._current_user = user
+            
             # Update user profile with display name
             auth.update_profile(user['idToken'], {'displayName': display_name})
+            
+            # Create user document in Firestore
+            db = FirebaseManager.get_firestore_client()
+            if db:
+                user_doc = db.collection('users').document(user['localId'])
+                user_doc.set({
+                    'email': email,
+                    'displayName': display_name,
+                    'created_at': firestore.SERVER_TIMESTAMP,
+                    'last_login': firestore.SERVER_TIMESTAMP,
+                    'preferences': {
+                        'theme': 'light',
+                        'notifications': True
+                    }
+                })
+            
             return user
         except Exception as e:
             logger.error(f"Sign up error: {str(e)}")

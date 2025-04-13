@@ -89,11 +89,19 @@ class CardDisplay:
             cols = st.columns(cards_per_row)
             for j, card in enumerate(row_cards):
                 with cols[j]:
-                    photo = card.get('photo', '') or 'https://placehold.co/160x220?text=No+Image'
-                    player = card.get('player_name', '')
-                    year = card.get('year', '')
-                    card_set = card.get('card_set', '')
-                    value = card.get('current_value', 0)
+                    # Handle both dictionary and Card object inputs
+                    if hasattr(card, 'photo'):
+                        photo = card.photo or 'https://placehold.co/160x220?text=No+Image'
+                        player = card.player_name
+                        year = card.year
+                        card_set = card.card_set
+                        value = card.current_value
+                    else:
+                        photo = card.get('photo', '') or 'https://placehold.co/160x220?text=No+Image'
+                        player = card.get('player_name', '')
+                        year = card.get('year', '')
+                        card_set = card.get('card_set', '')
+                        value = card.get('current_value', 0)
 
                     # Card visual
                     st.markdown(f"""
@@ -239,7 +247,7 @@ def render_card_display(card):
     Renders a detailed view of a single card.
     
     Args:
-        card (dict): The card data to display
+        card (dict or Card): The card data to display
     """
     if not card:
         st.warning("No card data available")
@@ -250,7 +258,10 @@ def render_card_display(card):
 
     with col1:
         # Display card image
-        photo = card.get('photo', '')
+        if hasattr(card, 'photo'):
+            photo = card.photo
+        else:
+            photo = card.get('photo', '')
         if photo:
             st.image(photo, use_column_width=True)
         else:
@@ -258,27 +269,40 @@ def render_card_display(card):
 
     with col2:
         # Display card details
-        st.subheader(card.get('player_name', 'Unknown Player'))
+        if hasattr(card, 'player_name'):
+            st.subheader(card.player_name)
+        else:
+            st.subheader(card.get('player_name', 'Unknown Player'))
         
         # Basic info
-        st.write(f"**Year:** {card.get('year', 'N/A')}")
-        st.write(f"**Set:** {card.get('card_set', 'N/A')}")
-        st.write(f"**Card Number:** {card.get('card_number', 'N/A')}")
-        
-        # Condition and value
-        st.write(f"**Condition:** {card.get('condition', 'N/A')}")
-        st.write(f"**Current Value:** ${card.get('current_value', 0):,.2f}")
-        
-        # Additional details
-        if card.get('notes'):
-            st.write("**Notes:**")
-            st.write(card.get('notes'))
-        
-        # Tags
-        tags = card.get('tags', [])
-        if tags:
-            st.write("**Tags:**")
-            tag_cols = st.columns(4)
-            for i, tag in enumerate(tags):
-                with tag_cols[i % 4]:
-                    st.markdown(f"`{tag}`") 
+        if hasattr(card, 'year'):
+            st.write(f"**Year:** {card.year}")
+            st.write(f"**Set:** {card.card_set}")
+            st.write(f"**Card Number:** {card.card_number}")
+            st.write(f"**Condition:** {card.condition}")
+            st.write(f"**Current Value:** ${card.current_value:,.2f}")
+            if card.notes:
+                st.write("**Notes:**")
+                st.write(card.notes)
+            if card.tags:
+                st.write("**Tags:**")
+                tag_cols = st.columns(4)
+                for i, tag in enumerate(card.tags):
+                    with tag_cols[i % 4]:
+                        st.markdown(f"`{tag}`")
+        else:
+            st.write(f"**Year:** {card.get('year', 'N/A')}")
+            st.write(f"**Set:** {card.get('card_set', 'N/A')}")
+            st.write(f"**Card Number:** {card.get('card_number', 'N/A')}")
+            st.write(f"**Condition:** {card.get('condition', 'N/A')}")
+            st.write(f"**Current Value:** ${card.get('current_value', 0):,.2f}")
+            if card.get('notes'):
+                st.write("**Notes:**")
+                st.write(card.get('notes'))
+            tags = card.get('tags', [])
+            if tags:
+                st.write("**Tags:**")
+                tag_cols = st.columns(4)
+                for i, tag in enumerate(tags):
+                    with tag_cols[i % 4]:
+                        st.markdown(f"`{tag}`") 
