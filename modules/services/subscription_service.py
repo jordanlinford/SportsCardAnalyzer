@@ -89,10 +89,26 @@ class SubscriptionService:
     
     def check_search_limit(self, user_id: str, current_count: int, last_reset: datetime = None) -> bool:
         """Check if user can perform more searches"""
-        plan = self.get_user_plan(user_id)
-        if last_reset and datetime.now() - last_reset > timedelta(days=1):
-            return True
-        return current_count < plan['limits']['daily_search_limit']
+        try:
+            plan = self.get_user_plan(user_id)
+            
+            # Handle timezone-naive datetime
+            if last_reset and last_reset.tzinfo is not None:
+                last_reset = last_reset.replace(tzinfo=None)
+            
+            # Check if we need to reset the counter
+            if last_reset and datetime.now().replace(tzinfo=None) - last_reset > timedelta(days=1):
+                # Update the reset time atomically
+                self.db.collection('usage').document(user_id).update({
+                    'daily_search_count': 0,
+                    'last_search_reset': datetime.now().replace(tzinfo=None)
+                })
+                return True
+            
+            return current_count < plan['limits']['daily_search_limit']
+        except Exception as e:
+            self.logger.error(f"Error checking search limit: {str(e)}")
+            return False
     
     def get_available_features(self, user_id: str) -> list:
         """Get list of features available to the user"""
@@ -107,6 +123,10 @@ class SubscriptionService:
     def update_subscription(self, user_id: str, plan: str, stripe_data: dict) -> None:
         """Update user's subscription information"""
         try:
+            # Validate plan type
+            if plan not in self.plan_limits:
+                raise ValueError(f"Invalid plan type: {plan}")
+            
             current_period_end = stripe_data.get('current_period_end')
             if isinstance(current_period_end, datetime):
                 current_period_end = int(current_period_end.timestamp())
@@ -122,7 +142,8 @@ class SubscriptionService:
                 'stripe_subscription_id': stripe_data.get('subscription'),
                 'subscription_status': stripe_data.get('status', 'active'),
                 'current_period_end': datetime.fromtimestamp(current_period_end),
-                'limits': self.plan_limits[plan]
+                'limits': self.plan_limits[plan],
+                'last_updated': datetime.now()
             }
             
             self.db.collection('subscriptions').document(user_id).set(subscription_data)
@@ -139,14 +160,21 @@ class SubscriptionService:
                     'card_count': 0,
                     'display_case_count': 0,
                     'daily_search_count': 0,
-                    'last_search_reset': datetime.now()
+                    'last_search_reset': datetime.now().replace(tzinfo=None)
                 }
-            return usage_doc.to_dict()
+            
+            usage_data = usage_doc.to_dict()
+            
+            # Ensure last_search_reset is timezone-naive
+            if 'last_search_reset' in usage_data and usage_data['last_search_reset'].tzinfo is not None:
+                usage_data['last_search_reset'] = usage_data['last_search_reset'].replace(tzinfo=None)
+            
+            return usage_data
         except Exception as e:
             self.logger.error(f"Error getting usage stats: {str(e)}")
             return {
                 'card_count': 0,
                 'display_case_count': 0,
                 'daily_search_count': 0,
-                'last_search_reset': datetime.now()
+                'last_search_reset': datetime.now().replace(tzinfo=None)
             } 
