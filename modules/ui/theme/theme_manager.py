@@ -24,19 +24,49 @@ class ThemeManager:
     
     @staticmethod
     def display_logo():
-        """Display the application logo."""
+        """Display the application logo with enhanced styling."""
+        st.markdown(
+            """
+            <style>
+                .logo-container {
+                    display: flex;
+                    justify-content: center;
+                    align-items: center;
+                    padding: 1rem 0;
+                    margin-bottom: 1rem;
+                }
+                .logo-container img {
+                    max-width: 100%;
+                    height: auto;
+                    transition: transform 0.2s ease;
+                }
+                .logo-container img:hover {
+                    transform: scale(1.02);
+                }
+                @media (max-width: 640px) {
+                    .logo-container {
+                        padding: 0.5rem 0;
+                    }
+                }
+            </style>
+            """,
+            unsafe_allow_html=True
+        )
+        
         if os.path.exists(LOGO_PATH):
-            st.image(
-                LOGO_PATH,
-                width=LOGO_WIDTH,
-                caption=None,
-                use_container_width=False
+            st.markdown(
+                f"""
+                <div class="logo-container">
+                    <img src="{LOGO_PATH}" alt="Sports Card Analyzer Logo" width="{LOGO_WIDTH}" height="{LOGO_HEIGHT}">
+                </div>
+                """,
+                unsafe_allow_html=True
             )
         else:
             st.markdown(
                 f"""
                 <div class="logo-container">
-                    <h1 style="color: {STREAMLIT_THEME['primaryColor']}">Sports Card Analyzer</h1>
+                    <h1 style="color: {STREAMLIT_THEME['primaryColor']}; font-size: 2rem; margin: 0;">Sports Card Analyzer</h1>
                 </div>
                 """,
                 unsafe_allow_html=True

@@ -43,12 +43,6 @@ st.set_page_config(
 # Apply theme styles
 ThemeManager.apply_theme_styles()
 
-# Add branding to sidebar
-with st.sidebar:
-    st.markdown('<div class="logo-container">', unsafe_allow_html=True)
-    BrandingComponent.display_horizontal_logo()
-    st.markdown('</div>', unsafe_allow_html=True)
-
 # Initialize session state variables
 if 'user' not in st.session_state:
     st.session_state.user = None
@@ -261,6 +255,28 @@ def main():
     # If user is not logged in, redirect to login page
     if not st.session_state.user:
         st.switch_page("pages/0_login.py")
+    
+    # Sidebar
+    with st.sidebar:
+        # Sidebar header with branding
+        st.markdown('<div class="logo-container">', unsafe_allow_html=True)
+        BrandingComponent.display_horizontal_logo()
+        st.markdown('</div>', unsafe_allow_html=True)
+        
+        # Navigation
+        st.page_link("app.py", label="Home", icon="🏠")
+        st.page_link("pages/1_market_analysis.py", label="Market Analysis", icon="📊")
+        st.page_link("pages/4_display_case.py", label="Display Case", icon="🖼️")
+        st.page_link("pages/3_collection_manager.py", label="Collection Manager", icon="📋")
+        st.page_link("pages/2_trade_analyzer.py", label="Trade Analyzer", icon="🔄")
+        st.page_link("pages/subscription_7.py", label="Subscription", icon="💎")
+        st.page_link("pages/6_profile_management.py", label="Profile", icon="👤")
+        
+        # Logout button
+        if st.button("Logout", type="primary"):
+            st.session_state.user = None
+            st.session_state.uid = None
+            st.rerun()
     
     st.title("Display Case")
     

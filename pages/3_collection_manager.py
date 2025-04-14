@@ -25,6 +25,7 @@ import os
 from modules.ui.branding import BrandingComponent
 from typing import List, Dict, Any, Union
 import zipfile
+import time
 
 # Add the project root directory to the Python path
 project_root = str(Path(__file__).parent.parent)
@@ -42,11 +43,34 @@ st.set_page_config(
 # Apply theme styles
 ThemeManager.apply_theme_styles()
 
+# Add branding to sidebar
+with st.sidebar:
+    st.markdown('<div class="logo-container">', unsafe_allow_html=True)
+    BrandingComponent.display_horizontal_logo()
+    st.markdown('</div>', unsafe_allow_html=True)
+
 # Initialize session state variables
 if 'user' not in st.session_state:
     st.session_state.user = None
 if 'uid' not in st.session_state:
     st.session_state.uid = None
+
+# Initialize Firebase
+firebase_manager = FirebaseManager.get_instance()
+if not firebase_manager._initialized:
+    if not firebase_manager.initialize():
+        st.error("Failed to initialize Firebase. Please try again later.")
+        st.stop()
+
+# Check if user is authenticated
+if not st.session_state.user or not st.session_state.uid:
+    st.error("No user ID found. Please log in again.")
+    st.info("Redirecting you to the login page...")
+    time.sleep(2)  # Give user time to read the message
+    st.switch_page("pages/0_login.py")
+    st.stop()
+
+# Initialize other session state variables
 if 'editing_card' not in st.session_state:
     st.session_state.editing_card = None
 if 'editing_data' not in st.session_state:
@@ -735,11 +759,24 @@ def load_collection_from_firebase():
     try:
         if not st.session_state.uid:
             st.error("No user ID found. Please log in again.")
+            st.info("Redirecting you to the login page...")
+            time.sleep(2)
+            st.switch_page("pages/0_login.py")
             return []
+        
+        # Ensure Firebase is initialized
+        if not firebase_manager._initialized:
+            if not firebase_manager.initialize():
+                st.error("Failed to connect to Firebase. Please try again later.")
+                return []
         
         # Get collection using DatabaseService
         collection = DatabaseService.get_user_collection(st.session_state.uid)
         
+        if collection is None:
+            st.error("Failed to load collection. Please try again.")
+            return []
+            
         print(f"Successfully loaded {len(collection)} cards from Firebase")
         return collection
         
@@ -1195,27 +1232,6 @@ def main():
     # If user is not logged in, redirect to login page
     if not st.session_state.user:
         st.switch_page("pages/0_login.py")
-    
-    # Sidebar
-    with st.sidebar:
-        # Sidebar header with branding
-        st.markdown('<div class="logo-container">', unsafe_allow_html=True)
-        BrandingComponent.display_horizontal_logo()
-        st.markdown('</div>', unsafe_allow_html=True)
-        
-        # Navigation
-        st.page_link("app.py", label="Home", icon="🏠")
-        st.page_link("pages/1_market_analysis.py", label="Market Analysis", icon="📊")
-        st.page_link("pages/4_display_case.py", label="Display Case", icon="📸")
-        st.page_link("pages/3_collection_manager.py", label="Collection Manager", icon="📋")
-        st.page_link("pages/2_trade_analyzer.py", label="Trade Analyzer", icon="🔄")
-        st.page_link("pages/6_profile_management.py", label="Profile", icon="👤")
-        
-        # Logout button
-        if st.button("Logout", type="primary"):
-            st.session_state.user = None
-            st.session_state.uid = None
-            st.rerun()
     
     st.title("Collection Manager")
     

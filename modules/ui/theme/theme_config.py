@@ -1,18 +1,18 @@
 """Theme configuration for the Sports Card Analyzer app."""
 
 # Primary colors
-PRIMARY_COLOR = "#000000"  # Black to match logo
-SECONDARY_COLOR = "#2563EB"  # Modern blue accent
-ACCENT_COLOR = "#4B5563"  # Neutral gray accent
+PRIMARY_COLOR = "#1A365D"  # Deep navy blue
+SECONDARY_COLOR = "#2B6CB0"  # Rich blue
+ACCENT_COLOR = "#E2E8F0"  # Light blue-gray
 
 # Background colors
 BACKGROUND_COLOR = "#FFFFFF"  # Clean white
-SECONDARY_BACKGROUND_COLOR = "#F8FAFC"  # Light gray
-TERTIARY_BACKGROUND_COLOR = "#F1F5F9"  # Slightly darker gray
+SECONDARY_BACKGROUND_COLOR = "#F7FAFC"  # Very light blue-gray
+TERTIARY_BACKGROUND_COLOR = "#EDF2F7"  # Light blue-gray
 
 # Text colors
-TEXT_COLOR = "#111827"  # Near black for better readability
-SECONDARY_TEXT_COLOR = "#4B5563"  # Medium gray
+TEXT_COLOR = "#1A202C"  # Dark blue-gray
+SECONDARY_TEXT_COLOR = "#4A5568"  # Medium blue-gray
 
 # Logo configuration
 LOGO_PATH = "static/images/logo.png"
@@ -22,10 +22,10 @@ FAVICON_PATH = "static/icons/icon.svg"  # Path to the icon for favicon
 
 # Theme configuration for Streamlit
 STREAMLIT_THEME = {
-    'primaryColor': '#FF4B4B',
-    'backgroundColor': '#FFFFFF',
-    'secondaryBackgroundColor': '#F0F2F6',
-    'textColor': '#262730',
+    'primaryColor': PRIMARY_COLOR,
+    'backgroundColor': BACKGROUND_COLOR,
+    'secondaryBackgroundColor': SECONDARY_BACKGROUND_COLOR,
+    'textColor': TEXT_COLOR,
     'font': 'Inter'
 }
 
@@ -35,46 +35,61 @@ CUSTOM_CSS = """
 
 /* Theme variables */
 :root {
-    --primary-color: #000000;
+    --primary-color: #1A365D;
+    --secondary-color: #2B6CB0;
+    --accent-color: #E2E8F0;
     --background-color: #FFFFFF;
-    --secondary-background-color: #F8FAFC;
-    --text-color: #111827;
+    --secondary-background-color: #F7FAFC;
+    --text-color: #1A202C;
+    --secondary-text-color: #4A5568;
+    --border-color: #E2E8F0;
+    --success-color: #38A169;
+    --warning-color: #D69E2E;
+    --error-color: #E53E3E;
+    --info-color: #3182CE;
 }
 
 /* Base styles */
 .stApp {
     font-family: 'Inter', sans-serif;
+    background-color: var(--background-color);
 }
 
-/* Mobile-friendly adjustments */
-@media (max-width: 640px) {
-    /* Make forms full width */
-    .stForm {
-        width: 100% !important;
-    }
-    
-    /* Adjust chart size */
-    .js-plotly-plot {
-        height: 300px !important;
-    }
-    
-    /* Stack metrics vertically */
-    [data-testid="stMetricValue"] {
-        font-size: 1.2rem !important;
-    }
-    
-    /* Adjust card display */
-    .card-image {
-        max-width: 200px !important;
-        margin: 0 auto !important;
-        display: block !important;
-    }
-    
-    /* Make price segments stack */
-    .price-segment {
-        width: 100% !important;
-        margin-bottom: 1rem !important;
-    }
+/* Card styles */
+.card {
+    background-color: var(--background-color);
+    border-radius: 8px;
+    padding: 1.5rem;
+    margin-bottom: 1rem;
+    box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.1), 0 1px 2px 0 rgba(0, 0, 0, 0.06);
+    border: 1px solid var(--border-color);
+}
+
+/* Button styles */
+.stButton > button {
+    background-color: var(--primary-color);
+    color: white;
+    border-radius: 6px;
+    padding: 0.5rem 1rem;
+    font-weight: 500;
+    transition: all 0.2s;
+}
+
+.stButton > button:hover {
+    background-color: var(--secondary-color);
+    transform: translateY(-1px);
+}
+
+/* Metric styles */
+[data-testid="stMetricValue"] {
+    font-size: 2rem;
+    font-weight: 700;
+    color: var(--primary-color);
+}
+
+[data-testid="stMetricLabel"] {
+    font-size: 1rem;
+    color: var(--secondary-text-color);
 }
 
 /* Header styles */
@@ -82,235 +97,69 @@ h1, h2, h3, h4, h5, h6 {
     font-family: 'Inter', sans-serif;
     font-weight: 700;
     letter-spacing: -0.02em;
+    color: var(--text-color);
 }
 
 /* Sidebar styles */
 [data-testid="stSidebar"] {
     background-color: var(--background-color);
-    border-right: 1px solid rgba(0,0,0,0.1);
-    padding: 1rem;
+    border-right: 1px solid var(--border-color);
+    padding: 1.5rem;
 }
 
 [data-testid="stSidebar"] [data-testid="stMarkdown"] {
     font-family: 'Inter', sans-serif;
 }
 
-/* Sidebar header (logo area) */
-[data-testid="stSidebar"] .sidebar-header {
-    padding: 1rem;
-    border-bottom: 1px solid rgba(0,0,0,0.1);
-    margin-bottom: 1rem;
-    background: linear-gradient(to bottom, rgba(0,0,0,0.02), transparent);
+/* Sidebar navigation */
+[data-testid="stSidebar"] .sidebar-content {
+    margin-top: 2rem;
 }
 
-/* Sidebar navigation styles */
-[data-testid="stSidebar"] .stPageLink {
-    padding: 0.5rem 1rem;
+[data-testid="stSidebar"] .sidebar-nav-item {
+    padding: 0.75rem 1rem;
     margin: 0.25rem 0;
-    border-radius: 4px;
-    transition: all 0.2s ease;
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    color: var(--text-color);
-    text-decoration: none;
+    border-radius: 6px;
+    transition: all 0.2s;
 }
 
-[data-testid="stSidebar"] .stPageLink:hover {
-    background-color: rgba(0,0,0,0.05);
-    color: var(--primary-color);
+[data-testid="stSidebar"] .sidebar-nav-item:hover {
+    background-color: var(--accent-color);
 }
 
-[data-testid="stSidebar"] .stPageLink.active {
-    background-color: var(--primary-color);
-    color: white;
-}
-
-/* Logo container styles */
-.logo-container {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    width: 100%;
-    margin: 0;
-    padding: 1rem;
-}
-
-.logo-container.vertical {
-    flex-direction: column;
-    text-align: center;
-}
-
-.logo-container.horizontal {
-    flex-direction: row;
-}
-
-/* Logo text styles */
-.logo-text {
-    font-size: 2.5rem;
-    font-weight: 700;
-    color: var(--text-color);
-    margin: 0;
-    line-height: 1.2;
-    text-align: center;
-}
-
-/* Button styles */
-.stButton > button {
-    font-family: 'Inter', sans-serif;
-    font-weight: 600;
-    border-radius: 4px;
-    transition: all 0.2s ease;
-}
-
-.stButton > button:hover {
-    transform: translateY(-1px);
-    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-}
-
-/* Card styles */
-.card {
-    background: white;
-    border-radius: 8px;
-    border: 1px solid rgba(0,0,0,0.1);
-    padding: 1.5rem;
-    margin-bottom: 1rem;
-    transition: all 0.2s ease;
-}
-
-.card:hover {
-    transform: translateY(-2px);
-    box-shadow: 0 4px 8px rgba(0,0,0,0.1);
-}
-
-/* Variation card styles */
-.variation-card {
-    border: 1px solid #ddd;
-    padding: 1rem;
-    border-radius: 8px;
-    margin-bottom: 1rem;
-}
-
-/* Grade card styles */
-.grade-card {
-    border: 1px solid #ddd;
-    padding: 1rem;
-    border-radius: 8px;
-    margin-bottom: 1rem;
-    background-color: #f8f9fa;
-    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-}
-
-.grade-card h4 {
-    margin: 0 0 0.5rem 0;
-    color: #2c3e50;
-}
-
-.grade-card p {
-    margin: 0.25rem 0;
-    color: #34495e;
-}
-
-/* Input field styles */
+/* Form styles */
 .stTextInput > div > div > input,
-.stNumberInput > div > div > input,
-.stDateInput > div > div > input {
-    font-family: 'Inter', sans-serif;
-    border-radius: 4px;
+.stTextArea > div > div > textarea,
+.stSelectbox > div > div > div {
+    border-radius: 6px;
+    border: 1px solid var(--border-color);
+    padding: 0.5rem;
 }
 
-/* Alert/message styles */
+/* Alert styles */
 .stAlert {
-    border-radius: 4px;
+    border-radius: 6px;
+    padding: 1rem;
 }
 
-/* Text styles */
-.stMarkdown {
-    font-family: 'Inter', sans-serif;
-}
-
-/* Navigation styles */
-.nav-item {
-    padding: 0.5rem 1rem;
-    margin: 0.25rem 0;
-    border-radius: 4px;
-    transition: all 0.2s ease;
-}
-
-.nav-item:hover {
-    background-color: rgba(0,0,0,0.05);
-}
-
-.nav-item.active {
-    background-color: var(--primary-color);
-    color: white;
-}
-
-/* Dark mode overrides */
-@media (prefers-color-scheme: dark) {
-    :root {
-        --primary-color: #FFFFFF;
-        --background-color: #111111;
-        --secondary-background-color: #1a1a1a;
-        --text-color: #FFFFFF;
-    }
-
-    .stApp {
-        background-color: var(--background-color);
-    }
-
-    [data-testid="stSidebar"] {
-        background-color: var(--background-color);
-        border-right: 1px solid rgba(255,255,255,0.1);
-    }
-
-    [data-testid="stSidebar"] .sidebar-header {
-        border-bottom: 1px solid rgba(255,255,255,0.1);
-        background: linear-gradient(to bottom, rgba(255,255,255,0.02), transparent);
-    }
-
-    [data-testid="stSidebar"] .stPageLink {
-        color: var(--text-color);
-    }
-
-    [data-testid="stSidebar"] .stPageLink:hover {
-        background-color: rgba(255,255,255,0.05);
-        color: var(--primary-color);
-    }
-
-    .card {
-        background: var(--background-color);
-        border: 1px solid rgba(255,255,255,0.1);
-    }
-
-    .variation-card {
-        border: 1px solid rgba(255,255,255,0.1);
-        background-color: var(--secondary-background-color);
-    }
-
-    .grade-card {
-        border: 1px solid rgba(255,255,255,0.1);
-        background-color: var(--secondary-background-color);
-    }
-
-    .grade-card h4 {
-        color: var(--text-color);
-    }
-
-    .grade-card p {
-        color: var(--text-color);
-    }
-
-    .logo-container svg {
-        color: var(--text-color);
+/* Mobile-friendly adjustments */
+@media (max-width: 640px) {
+    .stForm {
+        width: 100% !important;
     }
     
-    .logo-text {
-        color: var(--text-color);
+    .js-plotly-plot {
+        height: 300px !important;
     }
-
-    .nav-item:hover {
-        background-color: rgba(255,255,255,0.05);
+    
+    [data-testid="stMetricValue"] {
+        font-size: 1.5rem !important;
+    }
+    
+    .card-image {
+        max-width: 200px !important;
+        margin: 0 auto !important;
+        display: block !important;
     }
 }
 """

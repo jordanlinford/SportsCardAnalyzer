@@ -1296,14 +1296,6 @@ def main():
         BrandingComponent.display_horizontal_logo()
         st.markdown('</div>', unsafe_allow_html=True)
         
-        # Navigation
-        st.page_link("app.py", label="Home", icon="🏠")
-        st.page_link("pages/1_market_analysis.py", label="Market Analysis", icon="📊")
-        st.page_link("pages/4_display_case.py", label="Display Case", icon="📸")
-        st.page_link("pages/3_collection_manager.py", label="Collection Manager", icon="📋")
-        st.page_link("pages/2_trade_analyzer.py", label="Trade Analyzer", icon="🔄")
-        st.page_link("pages/6_profile_management.py", label="Profile", icon="👤")
-        
         # Logout button
         if st.button("Logout", type="primary"):
             st.session_state.user = None

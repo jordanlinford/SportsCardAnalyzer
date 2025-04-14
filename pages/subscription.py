@@ -17,6 +17,12 @@ st.set_page_config(
 # Apply theme styles
 ThemeManager.apply_theme_styles()
 
+# Add branding to sidebar
+with st.sidebar:
+    st.markdown('<div class="logo-container">', unsafe_allow_html=True)
+    BrandingComponent.display_horizontal_logo()
+    st.markdown('</div>', unsafe_allow_html=True)
+
 def create_checkout_session_with_promo(payment_service, price_id, customer_id, promo_code=None):
     """Helper function to create checkout session with optional promo code"""
     session_params = {
@@ -147,29 +153,7 @@ def main():
         if st.button("Go to Login Page"):
             st.switch_page("pages/0_login.py")
         st.stop()
-    
-    # Sidebar
-    with st.sidebar:
-        # Sidebar header with branding
-        st.markdown('<div class="logo-container">', unsafe_allow_html=True)
-        BrandingComponent.display_horizontal_logo()
-        st.markdown('</div>', unsafe_allow_html=True)
-        
-        # Navigation
-        st.page_link("app.py", label="Home")
-        st.page_link("pages/1_market_analysis.py", label="Market Analysis")
-        st.page_link("pages/4_display_case.py", label="Display Case")
-        st.page_link("pages/3_collection_manager.py", label="Collection Manager")
-        st.page_link("pages/2_trade_analyzer.py", label="Trade Analyzer")
-        st.page_link("pages/subscription.py", label="Subscription", icon="💎")
-        st.page_link("pages/6_profile_management.py", label="Profile")
-        
-        # Logout button
-        if st.button("Logout", type="primary"):
-            st.session_state.user = None
-            st.session_state.uid = None
-            st.switch_page("pages/0_login.py")
-    
+
     # Render the subscription page
     render_subscription_page()
 

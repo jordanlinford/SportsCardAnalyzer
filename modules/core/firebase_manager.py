@@ -7,6 +7,7 @@ from dotenv import load_dotenv
 import time
 from typing import Optional, Dict, Any
 from datetime import datetime
+import atexit
 
 logger = logging.getLogger(__name__)
 
@@ -34,8 +35,29 @@ class FirebaseManager:
 
     def __init__(self):
         """Initialize Firebase connection if not already initialized"""
+        self._logger = logging.getLogger(__name__)
         if not FirebaseManager._initialized:
             self.initialize()
+        
+        # Register cleanup handler
+        atexit.register(self.cleanup)
+
+    def cleanup(self):
+        """Clean up Firebase resources"""
+        try:
+            if self._firebase_app:
+                firebase_admin.delete_app(self._firebase_app)
+                self._firebase_app = None
+                self._initialized = False
+                self._auth = None
+                self._db = None
+                self._logger.info("Successfully cleaned up Firebase resources")
+        except Exception as e:
+            self._logger.error(f"Error during Firebase cleanup: {str(e)}")
+
+    def __del__(self):
+        """Destructor to ensure cleanup"""
+        self.cleanup()
 
     @classmethod
     def initialize(cls) -> bool:
@@ -47,30 +69,18 @@ class FirebaseManager:
             # Load environment variables
             load_dotenv()
 
-            # Get credentials from environment variables
-            project_id = os.getenv('FIREBASE_PROJECT_ID')
-            private_key_id = os.getenv('FIREBASE_PRIVATE_KEY_ID')
-            private_key = os.getenv('FIREBASE_PRIVATE_KEY')
-            client_email = os.getenv('FIREBASE_CLIENT_EMAIL')
-            client_id = os.getenv('FIREBASE_CLIENT_ID')
-            client_x509_cert_url = os.getenv('FIREBASE_CLIENT_X509_CERT_URL')
-
-            if not all([project_id, private_key_id, private_key, client_email, client_id, client_x509_cert_url]):
-                logger.error("Missing required Firebase credentials in environment variables")
-                return False
-
             # Initialize Firebase Admin SDK
             cred = credentials.Certificate({
                 "type": "service_account",
-                "project_id": project_id,
-                "private_key_id": private_key_id,
-                "private_key": private_key.replace("\\n", "\n"),
-                "client_email": client_email,
-                "client_id": client_id,
+                "project_id": os.getenv('FIREBASE_PROJECT_ID'),
+                "private_key_id": os.getenv('FIREBASE_PRIVATE_KEY_ID'),
+                "private_key": os.getenv('FIREBASE_PRIVATE_KEY').replace("\\n", "\n"),
+                "client_email": os.getenv('FIREBASE_CLIENT_EMAIL'),
+                "client_id": os.getenv('FIREBASE_CLIENT_ID'),
                 "auth_uri": "https://accounts.google.com/o/oauth2/auth",
                 "token_uri": "https://oauth2.googleapis.com/token",
                 "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
-                "client_x509_cert_url": client_x509_cert_url
+                "client_x509_cert_url": os.getenv('FIREBASE_CLIENT_X509_CERT_URL')
             })
 
             try:
@@ -82,6 +92,26 @@ class FirebaseManager:
 
             cls._db = firestore.client()
             cls._auth = auth.Client(cls._firebase_app)
+
+            # Initialize Pyrebase client
+            firebase_config = {
+                "apiKey": os.getenv("FIREBASE_API_KEY"),
+                "authDomain": os.getenv("FIREBASE_AUTH_DOMAIN"),
+                "projectId": os.getenv("FIREBASE_PROJECT_ID"),
+                "storageBucket": os.getenv("FIREBASE_STORAGE_BUCKET"),
+                "messagingSenderId": os.getenv("FIREBASE_MESSAGING_SENDER_ID"),
+                "appId": os.getenv("FIREBASE_APP_ID"),
+                "databaseURL": f"https://{os.getenv('FIREBASE_PROJECT_ID')}.firebaseio.com"
+            }
+
+            # Verify all required config values are present
+            required_keys = ["apiKey", "authDomain", "projectId", "storageBucket", "messagingSenderId", "appId", "databaseURL"]
+            missing_keys = [key for key in required_keys if not firebase_config[key]]
+            if missing_keys:
+                raise ValueError(f"Missing required Firebase config values: {', '.join(missing_keys)}")
+
+            # Initialize Pyrebase
+            cls._firebase = pyrebase.initialize_app(firebase_config)
             cls._initialized = True
             logger.info("Firebase initialized successfully")
             return True
@@ -320,51 +350,35 @@ class FirebaseManager:
             if not self._initialized:
                 raise RuntimeError("Firebase not initialized")
 
-            # Sign in user with Firebase Auth
-            user = auth.get_user_by_email(email)
-            if not user:
-                raise auth.AuthError("User not found")
-
-            # Check if user document exists in Firestore
-            user_doc = self.db.collection('users').document(user.uid).get()
+            # Sign in user with Pyrebase
+            user = self._firebase.auth().sign_in_with_email_and_password(email, password)
+            
+            # Get user data from Firestore
+            user_doc = self.db.collection('users').document(user['localId']).get()
             
             # Create user document if it doesn't exist
             if not user_doc.exists:
                 user_data = {
                     'email': email,
-                    'display_name': user.display_name or email.split('@')[0],
+                    'display_name': email.split('@')[0],
                     'created_at': datetime.now(),
                     'last_login': datetime.now()
                 }
-                self.db.collection('users').document(user.uid).set(user_data)
+                self.db.collection('users').document(user['localId']).set(user_data)
             else:
                 # Update last login
-                self.db.collection('users').document(user.uid).update({
+                self.db.collection('users').document(user['localId']).update({
                     'last_login': datetime.now()
                 })
 
             # Set current user
-            self.set_current_user({
-                'localId': user.uid,
-                'email': user.email,
-                'displayName': user.display_name
-            })
+            self.set_current_user(user)
 
-            return {
-                'success': True,
-                'user': {
-                    'uid': user.uid,
-                    'email': user.email,
-                    'display_name': user.display_name
-                }
-            }
+            return user
 
         except Exception as e:
             logger.error(f"Error signing in user: {str(e)}")
-            return {
-                'success': False,
-                'error': str(e)
-            }
+            raise
 
     def sign_up(self, email: str, password: str, display_name: str = None) -> dict:
         """Create a new user with email and password"""
@@ -372,13 +386,9 @@ class FirebaseManager:
             if not self._initialized:
                 raise RuntimeError("Firebase not initialized")
 
-            # Create user in Firebase Auth
-            user = auth.create_user(
-                email=email,
-                password=password,
-                display_name=display_name or email.split('@')[0]
-            )
-
+            # Create user with Pyrebase
+            user = self._firebase.auth().create_user_with_email_and_password(email, password)
+            
             # Create user document in Firestore
             user_data = {
                 'email': email,
@@ -390,30 +400,16 @@ class FirebaseManager:
                     'notifications': True
                 }
             }
-            self.db.collection('users').document(user.uid).set(user_data)
+            self.db.collection('users').document(user['localId']).set(user_data)
 
             # Set current user
-            self.set_current_user({
-                'localId': user.uid,
-                'email': user.email,
-                'displayName': user.display_name
-            })
+            self.set_current_user(user)
 
-            return {
-                'success': True,
-                'user': {
-                    'uid': user.uid,
-                    'email': user.email,
-                    'display_name': user.display_name
-                }
-            }
+            return user
 
         except Exception as e:
             logger.error(f"Error creating user: {str(e)}")
-            return {
-                'success': False,
-                'error': str(e)
-            }
+            raise
 
     def sign_out(self) -> bool:
         """Sign out the current user"""
