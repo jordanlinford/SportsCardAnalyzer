@@ -86,8 +86,8 @@ class PaymentService:
                     'quantity': 1,
                 }],
                 mode='subscription',
-                success_url=os.getenv('STRIPE_SUCCESS_URL'),
-                cancel_url=os.getenv('STRIPE_CANCEL_URL'),
+                success_url=os.getenv('STRIPE_SUCCESS_URL', 'https://sportscardanalyzer.streamlit.app/subscription?success=true'),
+                cancel_url=os.getenv('STRIPE_CANCEL_URL', 'https://sportscardanalyzer.streamlit.app/subscription?canceled=true'),
                 metadata={
                     'user_id': user_id,
                     'plan': plan

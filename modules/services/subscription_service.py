@@ -47,6 +47,28 @@ class SubscriptionService:
         """Check if the user is an admin"""
         return email in self.admin_emails
     
+    def _convert_timestamp(self, timestamp):
+        """Convert various timestamp formats to integer"""
+        if timestamp is None:
+            return None
+        try:
+            if isinstance(timestamp, datetime):
+                return int(timestamp.timestamp())
+            elif isinstance(timestamp, (int, float)):
+                return int(timestamp)
+            else:
+                self.logger.warning(f"Invalid timestamp format: {timestamp}")
+                return None
+        except Exception as e:
+            self.logger.error(f"Error converting timestamp: {str(e)}")
+            return None
+
+    def _validate_subscription_data(self, data):
+        """Validate subscription data"""
+        if not data.get('customer') or not data.get('subscription'):
+            raise ValueError("Missing required Stripe data")
+        return True
+
     def get_user_plan(self, user_id: str) -> Dict:
         """Get user's current subscription plan"""
         try:
@@ -127,13 +149,20 @@ class SubscriptionService:
             if plan not in self.plan_limits:
                 raise ValueError(f"Invalid plan type: {plan}")
             
+            # Handle current_period_end timestamp conversion
             current_period_end = stripe_data.get('current_period_end')
-            if isinstance(current_period_end, datetime):
-                current_period_end = int(current_period_end.timestamp())
-            elif isinstance(current_period_end, (int, float)):
-                current_period_end = int(current_period_end)
-            else:
-                current_period_end = 0
+            if current_period_end is not None:
+                try:
+                    if isinstance(current_period_end, datetime):
+                        current_period_end = int(current_period_end.timestamp())
+                    elif isinstance(current_period_end, (int, float)):
+                        current_period_end = int(current_period_end)
+                    else:
+                        self.logger.warning(f"Invalid current_period_end format: {current_period_end}")
+                        current_period_end = 0
+                except Exception as e:
+                    self.logger.error(f"Error converting current_period_end: {str(e)}")
+                    current_period_end = 0
 
             subscription_data = {
                 'user_id': user_id,
@@ -141,12 +170,18 @@ class SubscriptionService:
                 'stripe_customer_id': stripe_data.get('customer'),
                 'stripe_subscription_id': stripe_data.get('subscription'),
                 'subscription_status': stripe_data.get('status', 'active'),
-                'current_period_end': datetime.fromtimestamp(current_period_end),
+                'current_period_end': datetime.fromtimestamp(current_period_end) if current_period_end else None,
                 'limits': self.plan_limits[plan],
                 'last_updated': datetime.now()
             }
             
+            # Add validation for required fields
+            if not subscription_data['stripe_customer_id'] or not subscription_data['stripe_subscription_id']:
+                raise ValueError("Missing required Stripe data")
+            
             self.db.collection('subscriptions').document(user_id).set(subscription_data)
+            self.logger.info(f"Successfully updated subscription for user {user_id}")
+            
         except Exception as e:
             self.logger.error(f"Error updating subscription: {str(e)}")
             raise
