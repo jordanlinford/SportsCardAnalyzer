@@ -78,18 +78,19 @@ try:
             for date_format in date_formats:
                 try:
                     # For ISO format, we may need to truncate
+                    parsing_str = created_at_str
                     if 'T' in created_at_str and date_format == '%Y-%m-%dT%H:%M:%S':
                         # Handle full ISO format with timezone
                         if '+' in created_at_str:
-                            created_at_str = created_at_str.split('+')[0]
+                            parsing_str = created_at_str.split('+')[0]
                         elif '.' in created_at_str:
-                            created_at_str = created_at_str.split('.')[0]
+                            parsing_str = created_at_str.split('.')[0]
                     
                     # Special case for just the date part
-                    if len(created_at_str) == 10 and date_format != '%Y-%m-%d' and date_format != '%m/%d/%Y':
+                    if len(parsing_str) == 10 and date_format != '%Y-%m-%d' and date_format != '%m/%d/%Y':
                         continue
                         
-                    created_date = datetime.strptime(created_at_str, date_format)
+                    created_date = datetime.strptime(parsing_str, date_format)
                     break
                 except ValueError:
                     continue
@@ -103,12 +104,10 @@ try:
                         if len(date_part) == 10:  # YYYY-MM-DD
                             created_date = datetime.strptime(date_part, '%Y-%m-%d')
                 except Exception:
-                    print(f"Failed all parsing attempts for date: {created_at_str}")
                     continue
                     
             # If we still couldn't parse the date, skip this card
             if created_date is None:
-                print(f"Could not parse date format for: {created_at_str}")
                 continue
                 
             # Check if card was added in the last 7 days

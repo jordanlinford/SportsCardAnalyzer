@@ -38,6 +38,7 @@ class Card:
     photo: str
     roi: float
     tags: List[str]
+    created_at: Optional[datetime] = None
 
     @classmethod
     def from_dict(cls, data: Dict) -> 'Card':
@@ -58,6 +59,39 @@ class Card:
             last_updated = datetime.fromisoformat(data.get('last_updated', datetime.now().isoformat()))
         except ValueError:
             last_updated = datetime.now()
+            
+        # Handle created_at date with multiple format support
+        created_at = None
+        created_at_str = data.get('created_at')
+        if created_at_str:
+            try:
+                if isinstance(created_at_str, str):
+                    if 'T' in created_at_str:
+                        # Try ISO format
+                        if '+' in created_at_str:
+                            created_at_str = created_at_str.split('+')[0]
+                        if '.' in created_at_str:
+                            created_at_str = created_at_str.split('.')[0]
+                        created_at = datetime.fromisoformat(created_at_str)
+                    elif len(created_at_str) == 10:
+                        # Try YYYY-MM-DD format
+                        created_at = datetime.strptime(created_at_str, '%Y-%m-%d')
+                    else:
+                        # Try other formats
+                        formats = ['%Y-%m-%d %H:%M:%S', '%m/%d/%Y']
+                        for fmt in formats:
+                            try:
+                                created_at = datetime.strptime(created_at_str, fmt)
+                                break
+                            except ValueError:
+                                continue
+            except Exception:
+                # If all parsing fails, use current time
+                pass
+                
+        # Default to current time if parsing failed or no created_at provided
+        if created_at is None:
+            created_at = datetime.now()
 
         # Handle photo data
         photo = data.get('photo', '')
@@ -83,7 +117,8 @@ class Card:
             notes=data.get('notes', ''),
             photo=photo,
             roi=float(data.get('roi', 0.0)),
-            tags=tags
+            tags=tags,
+            created_at=created_at
         )
 
     def to_dict(self):
@@ -96,6 +131,12 @@ class Card:
         last_updated = self.last_updated
         if isinstance(last_updated, (datetime, date)):
             last_updated = last_updated.isoformat()
+            
+        created_at = self.created_at
+        if created_at is None:
+            created_at = datetime.now().isoformat()
+        elif isinstance(created_at, (datetime, date)):
+            created_at = created_at.isoformat()
             
         # Ensure condition is a string value
         condition = self.condition
@@ -121,7 +162,8 @@ class Card:
             'notes': str(self.notes),
             'roi': float(self.roi),
             'tags': [str(tag) for tag in self.tags],
-            'photo': photo
+            'photo': photo,
+            'created_at': created_at
         }
 
 @dataclass

@@ -1,7 +1,7 @@
 import streamlit as st
 import pandas as pd
 import io
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 from PIL import Image
 import base64
 import requests
@@ -1627,7 +1627,10 @@ def add_card(card_data):
     try:
         # Add created_at field for tracking recently added cards
         current_date = datetime.now()
-        card_data['created_at'] = current_date.strftime('%Y-%m-%d')
+        
+        # Store created_at as ISO format for better compatibility across the app
+        # This ensures a standard timestamp format that's easier to parse
+        card_data['created_at'] = current_date.isoformat()
         
         # Ensure last_updated is also set
         card_data['last_updated'] = current_date.isoformat()
@@ -1701,7 +1704,7 @@ def import_collection(file):
                 card['last_updated'] = datetime.now().isoformat()
             # Add created_at field if it doesn't exist for imported cards
             if 'created_at' not in card or card['created_at'] is None:
-                card['created_at'] = datetime.now().strftime('%Y-%m-%d')
+                card['created_at'] = datetime.now().isoformat()  # Use ISO format for consistency
             
             # Add the card to the subcollection
             card_id = f"{card['player_name']}_{card['year']}_{card['card_set']}_{card['card_number']}".replace(" ", "_").lower()
@@ -2155,359 +2158,212 @@ def main():
     # Initialize session state
     init_session_state()
     
-    # Check for refresh flag
-    if hasattr(st.session_state, 'refresh_required') and st.session_state.refresh_required:
-        st.session_state.refresh_required = False
-        st.session_state.collection = load_collection_from_firebase()
-        st.rerun()
-    
-    # Initialize session state for user if not exists
-    if 'user' not in st.session_state:
-        st.session_state.user = None
-    if 'uid' not in st.session_state:
-        st.session_state.uid = None
-    
-    # If user is not logged in, redirect to login page
-    if not st.session_state.user:
-        st.switch_page("pages/0_login.py")
-    
+    # Page setup
+    st.set_page_config(page_title="Collection Manager", layout="wide")
+
     st.title("Collection Manager")
     
-    # Load collection from Firebase if needed
-    if not has_cards(st.session_state.collection):
-        st.session_state.collection = load_collection_from_firebase()
+    # Menu Options and Layout
+    tab_titles = ["Add Card", "View Collection", "Import/Export", "Diagnostics"]
+    current_tab_index = 0
     
-    # Define the tab titles
-    tab_titles = ["Add Cards", "View Collection", "Share Collection", "Import/Export"]
-    
-    # If a current tab is set, select that tab
-    current_tab_index = 0  # Default to first tab (Add Cards)
-    if hasattr(st.session_state, 'current_tab') and st.session_state.current_tab in tab_titles:
-        current_tab_index = tab_titles.index(st.session_state.current_tab)
-    
-    # Create the tabs
+    # Set the active tab from session state if it exists
+    if 'current_tab' in st.session_state:
+        try:
+            current_tab_index = tab_titles.index(st.session_state.current_tab)
+        except ValueError:
+            current_tab_index = 0
+
+    # Create tabs
     tabs = st.tabs(tab_titles)
     
-    # If we're editing a card, show the edit form first
-    if st.session_state.editing_card is not None and st.session_state.editing_data is not None:
-        st.subheader("Edit Card")
-        edit_card_form(st.session_state.editing_card, st.session_state.editing_data)
-        if st.button("Cancel Edit", use_container_width=True):
-            st.session_state.editing_card = None
-            st.session_state.editing_data = None
-            st.rerun()
-        return  # Exit early to prevent showing other content
-    
-    # Tab 1: Add Cards
-    with tabs[0]:
-        st.subheader("Add New Card")
+    # Tab content - let Streamlit handle showing only the content of the selected tab
+    with tabs[0]:  # Add Card tab
         display_add_card_form()
-    
-    # Tab 2: View Collection
-    with tabs[1]:
-        if has_cards(st.session_state.collection):
-            # Search and filter section
-            with st.container():
-                st.markdown('<div class="search-filters">', unsafe_allow_html=True)
-                col1, col2 = st.columns(2)
-                with col1:
-                    search_term = st.text_input(
-                        "Search Collection",
-                        help="Search by player name, year, set, or tags"
-                    )
-                with col2:
-                    tag_filter = st.text_input(
-                        "Filter by Tag",
-                        help="Enter a tag to filter the collection"
-                    )
-                st.markdown('</div>', unsafe_allow_html=True)
-            
-            # Update values button
-            if st.button("Update All Values", use_container_width=True):
-                with st.spinner("Updating collection values..."):
-                    total_value, total_cost = update_card_values()
-                    st.success("Collection values updated successfully!")
-            
-            # Filter collection
-            filtered_collection = st.session_state.collection.copy()
-            if search_term:
-                filtered_collection = [
-                    card for card in filtered_collection
-                    if search_term.lower() in str(card).lower()
-                ]
-            if tag_filter:
-                filtered_collection = [
-                    card for card in filtered_collection
-                    if any(tag_filter.lower() in tag.lower() for tag in safe_get(card, 'tags', []))
-                ]
-            
-            # Display collection summary
-            display_collection_summary(filtered_collection)
-            
-            # Display collection with view toggle
-            st.subheader("Your Collection")
-            
-            # Use the view mode from session state if available (for redirections)
-            default_view = "Grid View"
-            if hasattr(st.session_state, 'view_mode'):
-                default_view = st.session_state.view_mode
-            
-            # Add view toggle
-            view_mode = st.radio(
-                "View Mode",
-                ["Grid View", "Table View"],
-                index=0 if default_view == "Grid View" else 1,
-                horizontal=True,
-                label_visibility="collapsed"
-            )
-            
-            # Save the view mode selection to session state
-            st.session_state.view_mode = view_mode
-            
-            if view_mode == "Grid View":
-                display_collection_grid(filtered_collection)
-            else:
-                display_collection_table(filtered_collection)
         
-        else:
-            st.info("Your collection is empty. Add some cards to get started!")
-    
-    # Tab 3: Share Collection
-    with tabs[2]:
-        st.subheader("Share Your Collection")
-        
-        # Generate share link for the entire collection
-        if has_cards(st.session_state.collection):
-            share_link = generate_share_link(st.session_state.collection)
-            st.markdown(f"""
-            <div class="share-section">
-                <p>Share your collection with others using this link:</p>
-                <a href="?{share_link}" class="share-button" target="_blank">
-                    📤 Share Collection
-                </a>
-            </div>
-            """, unsafe_allow_html=True)
+    with tabs[1]:  # View Collection tab
+        display_collection()
             
-            # Option to share filtered collection
-            st.write("---")
-            st.subheader("Share Filtered Collection")
-            
-            # Add filter options
-            player_filter = st.text_input("Filter by Player Name")
-            year_filter = st.text_input("Filter by Year")
-            set_filter = st.text_input("Filter by Card Set")
-            tag_filter = st.text_input("Filter by Tags")
-            
-            # Apply filters
-            filtered_collection = st.session_state.collection.copy()
-            if player_filter:
-                filtered_collection = [
-                    card for card in filtered_collection
-                    if player_filter.lower() in str(safe_get(card, 'player_name', '')).lower()
-                ]
-            if year_filter:
-                filtered_collection = [
-                    card for card in filtered_collection
-                    if year_filter.lower() in str(safe_get(card, 'year', '')).lower()
-                ]
-            if set_filter:
-                filtered_collection = [
-                    card for card in filtered_collection
-                    if set_filter.lower() in str(safe_get(card, 'card_set', '')).lower()
-                ]
-            if tag_filter:
-                filtered_collection = [
-                    card for card in filtered_collection
-                    if any(tag_filter.lower() in tag.lower() for tag in safe_get(card, 'tags', []))
-                ]
-            
-            # Use has_cards to check if filtered collection has cards
-            if has_cards(filtered_collection):
-                filtered_share_link = generate_share_link(filtered_collection)
-                st.markdown(f"""
-                <div class="share-section">
-                    <p>Share your filtered collection ({len(filtered_collection)} cards):</p>
-                    <a href="?{filtered_share_link}" class="share-button" target="_blank">
-                        📤 Share Filtered Collection
-                    </a>
-                </div>
-                """, unsafe_allow_html=True)
-            else:
-                st.info("No cards match your filters.")
-        else:
-            st.info("Add some cards to your collection to generate a share link.")
-    
-    # Tab 4: Import/Export
-    with tabs[3]:
+    with tabs[2]:  # Import/Export tab
+        # Create a two-column layout
         col1, col2 = st.columns(2)
         
+        # Export column
         with col1:
             st.subheader("Export Collection")
-            if has_cards(st.session_state.collection):
-                # Export format selection
-                export_format = st.radio(
-                    "Export Format",
-                    ["Excel", "CSV", "JSON"],
-                    horizontal=True,
-                    help="Choose the format for your exported collection"
-                )
-                
-                # Status container for export messages
-                export_status = st.empty()
-                
-                try:
-                    # Safely convert collection to DataFrame for export
-                    if isinstance(st.session_state.collection, pd.DataFrame):
-                        if st.session_state.collection.empty:
-                            export_status.warning("Collection DataFrame is empty.")
+            
+            # Export format selection
+            export_format = st.radio(
+                "Export Format",
+                ["Excel", "CSV", "JSON"],
+                horizontal=True,
+                help="Choose the format for your exported collection"
+            )
+            
+            # Status area for export feedback
+            export_status = st.empty()
+            
+            # Export button
+            if st.button("Export Collection", key="export_btn", use_container_width=True):
+                with st.spinner("Preparing your collection for export..."):
+                    # First step: Check if collection exists and create DataFrame
+                    try:
+                        if not hasattr(st.session_state, 'collection') or not st.session_state.collection:
+                            export_status.warning("No cards to export. Add some cards to your collection first.")
                             return
-                        df = st.session_state.collection.copy()
-                    else:
-                        # Check if it's a list and not empty
-                        if not isinstance(st.session_state.collection, list) or len(st.session_state.collection) == 0:
-                            export_status.warning("No cards to export.")
-                            return
-                        
-                        # Safely create DataFrame with error handling
-                        try:
-                            collection_dicts = []
-                            for card in st.session_state.collection:
-                                if hasattr(card, 'to_dict') and callable(getattr(card, 'to_dict')):
-                                    collection_dicts.append(card.to_dict())
-                                elif isinstance(card, dict):
-                                    collection_dicts.append(card)
-                                else:
-                                    st.warning(f"Skipped card of type {type(card)} that cannot be converted to dictionary")
                             
-                            if not collection_dicts:
-                                export_status.error("No valid cards to export after conversion")
+                        # Check collection type and convert if needed
+                        if isinstance(st.session_state.collection, pd.DataFrame):
+                            if st.session_state.collection.empty:  # Use .empty instead of direct boolean evaluation
+                                export_status.warning("Collection DataFrame is empty.")
+                                return
+                            df = st.session_state.collection.copy()
+                        else:
+                            # Check if it's a list and not empty
+                            if not isinstance(st.session_state.collection, list) or len(st.session_state.collection) == 0:
+                                export_status.warning("No cards to export.")
                                 return
                             
-                            df = pd.DataFrame(collection_dicts)
-                            if df.empty:  # Use .empty instead of direct boolean evaluation
-                                export_status.error("Resulting DataFrame is empty")
-                                return
-                        except Exception as df_err:
-                            export_status.error(f"Error preparing collection data: {str(df_err)}")
-                            st.write("Debug info:", traceback.format_exc())
-                            # Skip the rest of the export process
-                            return
-                    
-                    # Handle different export formats with error handling for each
-                    if export_format == "Excel":
-                        with st.spinner("Preparing Excel export..."):
+                            # Safely create DataFrame with error handling
                             try:
-                                excel_data = export_collection()
-                                if excel_data:
+                                collection_dicts = []
+                                for card in st.session_state.collection:
+                                    if hasattr(card, 'to_dict') and callable(getattr(card, 'to_dict')):
+                                        collection_dicts.append(card.to_dict())
+                                    elif isinstance(card, dict):
+                                        collection_dicts.append(card)
+                                    else:
+                                        st.warning(f"Skipped card of type {type(card)} that cannot be converted to dictionary")
+                                
+                                if not collection_dicts:
+                                    export_status.error("No valid cards to export after conversion")
+                                    return
+                                
+                                df = pd.DataFrame(collection_dicts)
+                                if df.empty:  # Use .empty instead of direct boolean evaluation
+                                    export_status.error("Resulting DataFrame is empty")
+                                    return
+                            except Exception as df_err:
+                                export_status.error(f"Error preparing collection data: {str(df_err)}")
+                                st.write("Debug info:", traceback.format_exc())
+                                # Skip the rest of the export process
+                                return
+                        
+                        # Handle different export formats with error handling for each
+                        if export_format == "Excel":
+                            with st.spinner("Preparing Excel export..."):
+                                try:
+                                    excel_data = export_collection()
+                                    if excel_data:
+                                        st.download_button(
+                                            label="Download Excel",
+                                            data=excel_data,
+                                            file_name=f"card_collection_{datetime.now().strftime('%Y%m%d')}.xlsx",
+                                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                                            use_container_width=True
+                                        )
+                                        export_status.success(f"Excel export ready with {len(df)} cards")
+                                    else:
+                                        export_status.error("Excel export failed. Try another format.")
+                                        
+                                        # Offer CSV as fallback
+                                        st.info("You can try CSV format as an alternative")
+                                except Exception as excel_err:
+                                    export_status.error(f"Excel export error: {str(excel_err)}")
+                                    st.write("Debug traceback:", traceback.format_exc())
+                                    st.info("Please try CSV format as an alternative")
+                        elif export_format == "CSV":
+                            with st.spinner("Preparing CSV export..."):
+                                try:
+                                    # Handle date columns for CSV export
+                                    export_df = df.copy()
+                                    
+                                    # Process each column to ensure CSV compatibility
+                                    for col in export_df.columns:
+                                        # Convert date objects to strings for CSV export
+                                        if export_df[col].dtype == 'object':
+                                            export_df[col] = export_df[col].apply(
+                                                lambda x: x.isoformat() if isinstance(x, (datetime, date)) else x
+                                            )
+                                    
+                                    # Safe CSV conversion
+                                    csv_data = export_df.to_csv(index=False)
                                     st.download_button(
-                                        label="Download Excel",
-                                        data=excel_data,
-                                        file_name=f"card_collection_{datetime.now().strftime('%Y%m%d')}.xlsx",
-                                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                                        label="Download CSV",
+                                        data=csv_data,
+                                        file_name=f"card_collection_{datetime.now().strftime('%Y%m%d')}.csv",
+                                        mime="text/csv",
                                         use_container_width=True
                                     )
-                                    export_status.success(f"Excel export ready with {len(df)} cards")
-                                else:
-                                    export_status.error("Excel export failed. Try another format.")
-                                    
-                                    # Offer CSV as fallback
-                                    st.info("You can try CSV format as an alternative")
-                            except Exception as excel_err:
-                                export_status.error(f"Excel export error: {str(excel_err)}")
-                                st.write("Debug traceback:", traceback.format_exc())
-                                st.info("Please try CSV format as an alternative")
-                    elif export_format == "CSV":
-                        with st.spinner("Preparing CSV export..."):
-                            try:
-                                # Handle date columns for CSV export
-                                export_df = df.copy()
-                                
-                                # Process each column to ensure CSV compatibility
-                                for col in export_df.columns:
-                                    # Convert date objects to strings for CSV export
-                                    if export_df[col].dtype == 'object':
-                                        export_df[col] = export_df[col].apply(
-                                            lambda x: x.isoformat() if isinstance(x, (datetime, date)) else x
-                                        )
-                                
-                                # Safe CSV conversion
-                                csv_data = export_df.to_csv(index=False)
-                                st.download_button(
-                                    label="Download CSV",
-                                    data=csv_data,
-                                    file_name=f"card_collection_{datetime.now().strftime('%Y%m%d')}.csv",
-                                    mime="text/csv",
-                                    use_container_width=True
-                                )
-                                export_status.success(f"CSV export ready with {len(df)} cards")
-                            except Exception as csv_err:
-                                export_status.error(f"CSV export error: {str(csv_err)}")
-                                st.write("Debug traceback:", traceback.format_exc())
-                                st.warning("Try JSON format instead")
-                    else:  # JSON
-                        with st.spinner("Preparing JSON export..."):
-                            try:
-                                # Convert the DataFrame to a list of dictionaries first
-                                records = df.to_dict(orient='records')
-                                
-                                # Process each record to ensure JSON compatibility
-                                for record in records:
-                                    for key, value in record.items():
-                                        if isinstance(value, (datetime, date)):
-                                            record[key] = value.isoformat()
-                                        elif pd.isna(value):
-                                            record[key] = None
-                                        elif not isinstance(value, (str, int, float, bool, list, dict, type(None))):
-                                            record[key] = str(value)
-                                
-                                # Use the built-in json module for better control
-                                json_data = json.dumps(records, default=str)
-                                st.download_button(
-                                    label="Download JSON",
-                                    data=json_data,
-                                    file_name=f"card_collection_{datetime.now().strftime('%Y%m%d')}.json",
-                                    mime="application/json",
-                                    use_container_width=True
-                                )
-                                export_status.success(f"JSON export ready with {len(records)} cards")
-                            except Exception as json_err:
-                                export_status.error(f"JSON export error: {str(json_err)}")
-                                st.write("Debug traceback:", traceback.format_exc())
-                                
-                                # Try a more robust approach for JSON
+                                    export_status.success(f"CSV export ready with {len(df)} cards")
+                                except Exception as csv_err:
+                                    export_status.error(f"CSV export error: {str(csv_err)}")
+                                    st.write("Debug traceback:", traceback.format_exc())
+                                    st.warning("Try JSON format instead")
+                        else:  # JSON
+                            with st.spinner("Preparing JSON export..."):
                                 try:
-                                    # Convert to simpler dictionaries first
-                                    simple_list = []
-                                    for card in st.session_state.collection:
-                                        if hasattr(card, 'to_dict'):
-                                            card_dict = card.to_dict()
-                                        else:
-                                            card_dict = card if isinstance(card, dict) else {}
-                                        
-                                        # Ensure all values are JSON serializable
-                                        for k, v in list(card_dict.items()):
-                                            if isinstance(v, (datetime, date)):
-                                                card_dict[k] = v.isoformat()
-                                            elif not isinstance(v, (str, int, float, bool, list, dict, type(None))):
-                                                card_dict[k] = str(v)
-                                        
-                                        simple_list.append(card_dict)
+                                    # Convert the DataFrame to a list of dictionaries first
+                                    records = df.to_dict(orient='records')
                                     
-                                    safe_json = json.dumps(simple_list)
+                                    # Process each record to ensure JSON compatibility
+                                    for record in records:
+                                        for key, value in record.items():
+                                            if isinstance(value, (datetime, date)):
+                                                record[key] = value.isoformat()
+                                            elif pd.isna(value):
+                                                record[key] = None
+                                            elif not isinstance(value, (str, int, float, bool, list, dict, type(None))):
+                                                record[key] = str(value)
+                                    
+                                    # Use the built-in json module for better control
+                                    json_data = json.dumps(records, default=str)
                                     st.download_button(
-                                        label="Download JSON (Simple Format)",
-                                        data=safe_json,
-                                        file_name=f"card_collection_simple_{datetime.now().strftime('%Y%m%d')}.json",
+                                        label="Download JSON",
+                                        data=json_data,
+                                        file_name=f"card_collection_{datetime.now().strftime('%Y%m%d')}.json",
                                         mime="application/json",
                                         use_container_width=True
                                     )
-                                    export_status.success(f"Simple JSON export ready with {len(simple_list)} cards")
-                                except Exception as simple_json_err:
-                                    export_status.error(f"All JSON export attempts failed: {str(simple_json_err)}")
+                                    export_status.success(f"JSON export ready with {len(records)} cards")
+                                except Exception as json_err:
+                                    export_status.error(f"JSON export error: {str(json_err)}")
                                     st.write("Debug traceback:", traceback.format_exc())
-                except Exception as e:
-                    export_status.error(f"Export error: {str(e)}")
-                    st.write("Debug info:", traceback.format_exc())
+                                    
+                                    # Try a more robust approach for JSON
+                                    try:
+                                        # Convert to simpler dictionaries first
+                                        simple_list = []
+                                        for card in st.session_state.collection:
+                                            if hasattr(card, 'to_dict'):
+                                                card_dict = card.to_dict()
+                                            else:
+                                                card_dict = card if isinstance(card, dict) else {}
+                                            
+                                            # Ensure all values are JSON serializable
+                                            for k, v in list(card_dict.items()):
+                                                if isinstance(v, (datetime, date)):
+                                                    card_dict[k] = v.isoformat()
+                                                elif not isinstance(v, (str, int, float, bool, list, dict, type(None))):
+                                                    card_dict[k] = str(v)
+                                            
+                                            simple_list.append(card_dict)
+                                        
+                                        safe_json = json.dumps(simple_list)
+                                        st.download_button(
+                                            label="Download JSON (Simple Format)",
+                                            data=safe_json,
+                                            file_name=f"card_collection_simple_{datetime.now().strftime('%Y%m%d')}.json",
+                                            mime="application/json",
+                                            use_container_width=True
+                                        )
+                                        export_status.success(f"Simple JSON export ready with {len(simple_list)} cards")
+                                    except Exception as simple_json_err:
+                                        export_status.error(f"All JSON export attempts failed: {str(simple_json_err)}")
+                                        st.write("Debug traceback:", traceback.format_exc())
+                    except Exception as e:
+                        export_status.error(f"Export error: {str(e)}")
+                        st.write("Debug info:", traceback.format_exc())
             else:
                 st.info("Add some cards to your collection to enable export.")
                 
@@ -2594,209 +2450,156 @@ def main():
                     progress_bar.progress(40)
                     status_text.text("Processing data...")
                     
-                    # Convert DataFrame to list of dictionaries
-                    imported_df = imported_df.copy()
-                    
-                    # Ensure all data is properly processed
-                    for col in imported_df.columns:
-                        # Convert all values to strings for consistency (except numeric columns)
-                        if col not in ['purchase_price', 'current_value']:
-                            imported_df[col] = imported_df[col].astype(str)
-                            # Clean up missing values
-                            imported_df[col] = imported_df[col].replace('nan', '').replace('None', '')
-                            imported_df[col] = imported_df[col].replace('NaN', '').replace('NaT', '')
-                    
-                    # Handle numeric columns
-                    for num_col in ['purchase_price', 'current_value']:
-                        if num_col in imported_df.columns:
-                            # Convert to float, handling errors
-                            imported_df[num_col] = pd.to_numeric(imported_df[num_col], errors='coerce').fillna(0.0)
-                    
-                    # Add created_at column if it doesn't exist
-                    if 'created_at' not in imported_df.columns:
-                        current_date_str = datetime.now().strftime('%Y-%m-%d')
-                        imported_df['created_at'] = current_date_str
-                    else:
-                        # Ensure created_at is properly formatted
-                        for i, value in enumerate(imported_df['created_at']):
-                            if pd.isna(value) or not value:
-                                imported_df.at[i, 'created_at'] = datetime.now().strftime('%Y-%m-%d')
-                    
-                    # Properly convert to records with explicit handling
-                    try:
-                        imported_collection = imported_df.to_dict('records')
-                        print(f"Successfully converted DataFrame to {len(imported_collection)} records")
-                    except Exception as conv_err:
-                        st.error(f"Error converting DataFrame to records: {str(conv_err)}")
-                        st.write(f"Debug traceback: {traceback.format_exc()}")
-                        return
-                    
-                    # Get existing collection
-                    existing_collection = st.session_state.collection
-                    if not isinstance(existing_collection, list):
-                        existing_collection = []
-                    
-                    # Enhanced duplicate detection
-                    def card_exists(card, collection):
-                        """Check if a card already exists in the collection"""
-                        try:
-                            # Get card attributes, handling both Card objects and dictionaries
-                            if hasattr(card, 'player_name'):
-                                card_name = str(card.player_name) if card.player_name is not None else ''
-                                card_year = str(card.year) if card.year is not None else ''
-                                card_set = str(card.card_set) if card.card_set is not None else ''
-                                card_number = str(card.card_number) if card.card_number is not None else ''
-                            else:
-                                card_name = str(card.get('player_name', '')) if card.get('player_name') is not None else ''
-                                card_year = str(card.get('year', '')) if card.get('year') is not None else ''
-                                card_set = str(card.get('card_set', '')) if card.get('card_set') is not None else ''
-                                card_number = str(card.get('card_number', '')) if card.get('card_number') is not None else ''
-                            
-                            # Handle pandas Series objects - convert to scalar if needed
-                            if hasattr(card_name, 'iloc') and len(card_name) > 0:
-                                card_name = str(card_name.iloc[0])
-                            if hasattr(card_year, 'iloc') and len(card_year) > 0:
-                                card_year = str(card_year.iloc[0])
-                            if hasattr(card_set, 'iloc') and len(card_set) > 0:
-                                card_set = str(card_set.iloc[0])
-                            if hasattr(card_number, 'iloc') and len(card_number) > 0:
-                                card_number = str(card_number.iloc[0])
-                                
-                            # Check if any value is a pandas Series/array and handle accordingly
-                            if any(isinstance(val, (pd.Series, np.ndarray)) for val in [card_name, card_year, card_set, card_number]):
-                                print(f"Warning: card data contains Series/array objects that may cause comparison issues")
-                                # Attempt to convert all to scalar strings
-                                card_name = str(card_name)
-                                card_year = str(card_year)
-                                card_set = str(card_set)
-                                card_number = str(card_number)
-                            
-                            # Check against existing cards
-                            for existing_card in collection:
-                                if hasattr(existing_card, 'player_name'):
-                                    existing_name = str(existing_card.player_name) if existing_card.player_name is not None else ''
-                                    existing_year = str(existing_card.year) if existing_card.year is not None else ''
-                                    existing_set = str(existing_card.card_set) if existing_card.card_set is not None else ''
-                                    existing_number = str(existing_card.card_number) if existing_card.card_number is not None else ''
-                                else:
-                                    existing_name = str(existing_card.get('player_name', '')) if existing_card.get('player_name') is not None else ''
-                                    existing_year = str(existing_card.get('year', '')) if existing_card.get('year') is not None else ''
-                                    existing_set = str(existing_card.get('card_set', '')) if existing_card.get('card_set') is not None else ''
-                                    existing_number = str(existing_card.get('card_number', '')) if existing_card.get('card_number') is not None else ''
-                                
-                                # Convert Series/array objects to strings if needed
-                                if hasattr(existing_name, 'iloc') and len(existing_name) > 0:
-                                    existing_name = str(existing_name.iloc[0])
-                                if hasattr(existing_year, 'iloc') and len(existing_year) > 0:
-                                    existing_year = str(existing_year.iloc[0])
-                                if hasattr(existing_set, 'iloc') and len(existing_set) > 0:
-                                    existing_set = str(existing_set.iloc[0])
-                                if hasattr(existing_number, 'iloc') and len(existing_number) > 0:
-                                    existing_number = str(existing_number.iloc[0])
-                                
-                                # Perform string comparison for safety
-                                if (card_name.lower() == existing_name.lower() and 
-                                    card_year.lower() == existing_year.lower() and 
-                                    card_set.lower() == existing_set.lower() and 
-                                    card_number.lower() == existing_number.lower()):
-                                    return True
-                            return False
-                        except Exception as e:
-                            print(f"Error checking if card exists: {str(e)}")
-                            print(f"Card data: {card}")
-                            print(f"Error traceback: {traceback.format_exc()}")
-                            return False
-                    
-                    progress_bar.progress(60)
-                    status_text.text("Checking for duplicates...")
-                    
-                    # Filter out duplicates
-                    try:
-                        new_cards = []
-                        duplicate_count = 0
-                        
-                        # Process cards in smaller batches with updates
-                        total_cards = len(imported_collection)
-                        batch_size = max(1, min(20, total_cards // 5))  # Adaptive batch size
-                        
-                        for i, card in enumerate(imported_collection):
-                            # Update progress periodically
-                            if i % batch_size == 0:
-                                progress_percent = 60 + (i / total_cards * 20)
-                                progress_bar.progress(int(progress_percent))
-                                status_text.text(f"Checking for duplicates... ({i}/{total_cards})")
-                            
-                            if not card_exists(card, existing_collection):
-                                new_cards.append(card)
-                            else:
-                                duplicate_count += 1
-                        
-                        if duplicate_count > 0:
-                            st.warning(f"Skipped {duplicate_count} duplicate cards.")
-                            
-                        if not new_cards:
-                            st.info("No new cards to import. All cards already exist in your collection.")
-                            progress_bar.progress(100)
-                            status_text.text("No new cards to import.")
-                            return
-                    except Exception as dup_err:
-                        st.error(f"Error checking for duplicates: {str(dup_err)}")
-                        st.write(f"Debug traceback: {traceback.format_exc()}")
-                        return
-                    
-                    progress_bar.progress(80)
-                    status_text.text(f"Saving {len(new_cards)} cards to database...")
-                    
-                    # Append only new cards to existing collection
-                    updated_collection = existing_collection + new_cards
-                    
-                    # Update session state
-                    st.session_state.collection = updated_collection
-                    
-                    # Save to Firebase with better error handling
-                    try:
-                        status_text.text(f"Saving {len(new_cards)} cards to Firebase...")
-                        # Attempt to save to Firebase
-                        save_success = save_collection_to_firebase()
-                        
-                        if save_success:
-                            progress_bar.progress(100)
-                            status_text.text("Import complete!")
-                            st.success(f"Successfully imported {len(new_cards)} new cards!")
-                            
-                            # Redirect to View Collection tab with Grid View after successful import
-                            st.session_state.current_tab = "View Collection"
-                            st.session_state.view_mode = "Grid View"
-                            st.rerun()
-                        else:
-                            progress_bar.progress(100)
-                            status_text.text("Import partially complete")
-                            st.error("Failed to save imported collection to Firebase, but cards were added to your local collection.")
-                            st.info("Try refreshing the page or reopening the app to sync with Firebase.")
-                    except Exception as firebase_err:
+                    # Handle file import with error handling
+                    if import_collection(imported_df):
                         progress_bar.progress(100)
-                        status_text.text("Import partially complete")
-                        st.error(f"Error saving to Firebase: {str(firebase_err)}")
-                        st.write(f"Debug traceback: {traceback.format_exc()}")
-                        st.info("Your cards were added locally but may not be saved to Firebase. Please check your collection.")
-                    
+                        status_text.text("Import completed successfully!")
+                    else:
+                        status_text.text("Import failed.")
+                        progress_bar.empty()
+                        
                 except Exception as e:
-                    st.error(f"Error importing file: {str(e)}")
-                    st.write("Debug: Error traceback:", traceback.format_exc())
-            
-            # Add download template button
-            st.download_button(
-                label="Download Collection Template",
-                data=generate_sample_template(),
-                file_name="collection_template.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                help="Download a template to help format your collection data for upload"
-            )
+                    st.error(f"Error during import: {str(e)}")
+                    st.write("Debug info:", traceback.format_exc())
+
+    with tabs[3]:  # Diagnostics tab
+        st.subheader("Collection Diagnostics")
+        
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            if st.button("Check Firebase Connection", use_container_width=True):
+                debug_firebase_connection()
+                
+            if st.button("Repair Firebase Collection", use_container_width=True):
+                repair_firebase_collection()
+        
+        with col2:
+            if st.button("Check Card Dates", use_container_width=True):
+                inspect_card_dates()
     
-    # Set the active tab based on session state (this is just for selecting the correct tab visually)
-    # It's important to understand that this doesn't affect which tab's content is shown
-    if hasattr(st.session_state, 'current_tab') and st.session_state.current_tab in tab_titles:
-        st.session_state.active_tab = current_tab_index
+    # Store the active tab index
+    st.session_state.active_tab = current_tab_index
+
+def inspect_card_dates():
+    """Diagnostic function to examine created_at dates in the collection"""
+    try:
+        st.subheader("Card Date Diagnostic Tool")
+        st.write("This tool examines the created_at dates in your collection to help diagnose recent additions display issues.")
+        
+        # Check if collection exists in session state
+        if not hasattr(st.session_state, 'collection') or not st.session_state.collection:
+            st.error("No cards found in your collection.")
+            return
+            
+        # Create a DataFrame for easier display
+        cards_data = []
+        for i, card in enumerate(st.session_state.collection):
+            if isinstance(card, dict):
+                card_dict = card
+            elif hasattr(card, 'to_dict') and callable(getattr(card, 'to_dict')):
+                card_dict = card.to_dict()
+            else:
+                continue
+                
+            # Extract key information
+            player_name = card_dict.get('player_name', 'Unknown')
+            year = card_dict.get('year', 'N/A')
+            card_set = card_dict.get('card_set', 'N/A')
+            card_number = card_dict.get('card_number', 'N/A')
+            created_at = card_dict.get('created_at', 'No date')
+            
+            # Try to parse the date for calculation
+            days_ago = "Unknown"
+            try:
+                if isinstance(created_at, str):
+                    if 'T' in created_at:
+                        created_date = datetime.fromisoformat(created_at.split('+')[0].split('.')[0])
+                    elif len(created_at) == 10:
+                        created_date = datetime.strptime(created_at, '%Y-%m-%d')
+                    else:
+                        created_date = datetime.strptime(created_at, '%Y-%m-%d %H:%M:%S')
+                        
+                    delta = datetime.now() - created_date
+                    days_ago = f"{delta.days} days ago"
+            except Exception as e:
+                days_ago = f"Error: {str(e)}"
+                
+            cards_data.append({
+                "Index": i,
+                "Card": f"{player_name} ({year} {card_set} #{card_number})",
+                "Created At": created_at,
+                "Type": type(created_at).__name__,
+                "Added": days_ago
+            })
+            
+        # Display as a table
+        df = pd.DataFrame(cards_data)
+        st.dataframe(df)
+        
+        # Show summary
+        seven_days_ago = datetime.now() - timedelta(days=7)
+        st.subheader("Recent Additions Analysis")
+        st.write(f"Current time: {datetime.now()}")
+        st.write(f"7 days ago: {seven_days_ago}")
+        
+        # Count recent cards
+        recent_count = 0
+        parsing_failures = 0
+        
+        for card in st.session_state.collection:
+            if isinstance(card, dict):
+                card_dict = card
+            elif hasattr(card, 'to_dict') and callable(getattr(card, 'to_dict')):
+                card_dict = card.to_dict()
+            else:
+                continue
+                
+            created_at = card_dict.get('created_at')
+            if not created_at:
+                continue
+                
+            try:
+                created_date = None
+                created_at_str = str(created_at)
+                
+                # Try multiple formats
+                date_formats = ['%Y-%m-%d', '%Y-%m-%dT%H:%M:%S', '%Y-%m-%d %H:%M:%S']
+                for fmt in date_formats:
+                    try:
+                        if fmt == '%Y-%m-%dT%H:%M:%S' and 'T' in created_at_str:
+                            parsing_str = created_at_str.split('+')[0].split('.')[0]
+                            created_date = datetime.strptime(parsing_str, fmt)
+                            break
+                        elif fmt == '%Y-%m-%d' and len(created_at_str) == 10:
+                            created_date = datetime.strptime(created_at_str, fmt)
+                            break
+                    except ValueError:
+                        continue
+                
+                # If still not parsed, try the date part
+                if created_date is None and 'T' in created_at_str:
+                    date_part = created_at_str.split('T')[0]
+                    if len(date_part) == 10:
+                        created_date = datetime.strptime(date_part, '%Y-%m-%d')
+                
+                if created_date is None:
+                    parsing_failures += 1
+                    continue
+                    
+                if created_date >= seven_days_ago:
+                    recent_count += 1
+                    
+            except Exception:
+                parsing_failures += 1
+                continue
+        
+        st.write(f"Found {recent_count} cards added in the last 7 days")
+        st.write(f"Had {parsing_failures} cards with dates that couldn't be parsed")
+            
+    except Exception as e:
+        st.error(f"Error in diagnostic tool: {str(e)}")
+        st.write(traceback.format_exc())
 
 if __name__ == "__main__":
     main()
