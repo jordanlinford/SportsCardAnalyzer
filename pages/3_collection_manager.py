@@ -26,6 +26,9 @@ from modules.ui.branding import BrandingComponent
 from typing import List, Dict, Any, Union
 import zipfile
 import time
+import ast
+from google.cloud import firestore
+import numpy as np
 
 # Add the project root directory to the Python path
 project_root = str(Path(__file__).parent.parent)
@@ -149,6 +152,9 @@ def init_session_state():
     if 'current_tab' not in st.session_state:
         st.session_state.current_tab = "View Collection"
     
+    if 'view_mode' not in st.session_state:
+        st.session_state.view_mode = "Grid View"
+    
     # User authentication state
     if 'user' not in st.session_state:
         st.session_state.user = None
@@ -184,6 +190,50 @@ def convert_df_to_excel(df):
     
     return output.getvalue()
 
+def clean_nan_values(data):
+    """Clean NaN values from a dictionary or DataFrame row"""
+    try:
+        if isinstance(data, dict):
+            cleaned_data = {}
+            for k, v in data.items():
+                if pd.isna(v):
+                    cleaned_data[k] = None
+                elif isinstance(v, (pd.Series, np.ndarray)):
+                    # Convert pandas Series/arrays to lists or scalars
+                    if hasattr(v, 'size') and v.size == 0:
+                        cleaned_data[k] = None
+                    elif hasattr(v, 'size') and v.size == 1:
+                        # Extract single value
+                        cleaned_data[k] = v.item() if hasattr(v, 'item') else v[0]
+                    else:
+                        # Convert to list
+                        cleaned_data[k] = v.tolist() if hasattr(v, 'tolist') else list(v)
+                else:
+                    cleaned_data[k] = v
+            return cleaned_data
+        elif isinstance(data, pd.Series):
+            # Convert Series to dict with special handling
+            result = {}
+            for index, value in data.items():
+                if pd.isna(value):
+                    result[index] = None
+                elif isinstance(value, (pd.Series, np.ndarray)):
+                    # Handle nested Series/arrays
+                    if hasattr(value, 'size') and value.size == 0:
+                        result[index] = None
+                    elif hasattr(value, 'size') and value.size == 1:
+                        result[index] = value.item() if hasattr(value, 'item') else value[0]
+                    else:
+                        result[index] = value.tolist() if hasattr(value, 'tolist') else list(value)
+                else:
+                    result[index] = value
+            return result
+        return data
+    except Exception as e:
+        print(f"Error in clean_nan_values: {str(e)}")
+        # If all else fails, return the original data
+        return data
+
 def update_card_values():
     """Update card values using the CardValueAnalyzer"""
     try:
@@ -192,13 +242,19 @@ def update_card_values():
             return 0, 0
         
         analyzer = CardValueAnalyzer()
-        total_value = 0
-        total_cost = 0
+        total_value = 0.0
+        total_cost = 0.0
         
-        for idx, card in enumerate(st.session_state.collection):
+        # Create a copy of the collection to modify
+        updated_collection = st.session_state.collection.copy()
+        
+        for idx, card in enumerate(updated_collection):
             try:
-                # Get current value
-                current_value = analyzer.analyze_card_value(
+                # Clean NaN values from the card
+                card = clean_nan_values(card)
+                
+                # Get eBay sale value
+                ebay_value = analyzer.analyze_card_value(
                     safe_get(card, 'player_name', ''),
                     safe_get(card, 'year', ''),
                     safe_get(card, 'card_set', ''),
@@ -207,21 +263,28 @@ def update_card_values():
                     safe_get(card, 'condition', '')
                 )
                 
-                # Update card value - handle both Card objects and dictionaries
-                if hasattr(card, 'current_value'):
-                    card.current_value = current_value
-                else:
-                    card['current_value'] = current_value
+                # Only update if eBay value is greater than 0
+                if ebay_value > 0:
+                    # Update card value - handle both Card objects and dictionaries
+                    if hasattr(card, 'current_value'):
+                        card.current_value = float(ebay_value)
+                        card.last_updated = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                    else:
+                        card['current_value'] = float(ebay_value)
+                        card['last_updated'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                
+                # Get purchase price and current value as floats
+                purchase_price = float(safe_get(card, 'purchase_price', 0))
+                current_value = float(safe_get(card, 'current_value', 0))
                 
                 # Calculate ROI
-                purchase_price = float(safe_get(card, 'purchase_price', 0))
                 roi = ((current_value - purchase_price) / purchase_price * 100) if purchase_price > 0 else 0
                 
                 # Update ROI - handle both Card objects and dictionaries
                 if hasattr(card, 'roi'):
-                    card.roi = roi
+                    card.roi = float(roi)
                 else:
-                    card['roi'] = roi
+                    card['roi'] = float(roi)
                 
                 # Update totals
                 total_value += current_value
@@ -231,14 +294,17 @@ def update_card_values():
                 st.warning(f"Warning: Could not update value for card {idx + 1}. Error: {str(card_error)}")
                 continue
         
-        # Save updated collection
+        # Update the session state with the modified collection
+        st.session_state.collection = updated_collection
+        
+        # Save changes to Firebase
         if save_collection_to_firebase():
-            st.success("Card values updated successfully!")
+            st.success("Collection values updated successfully!")
         else:
             st.error("Failed to save updated values to database.")
         
         return total_value, total_cost
-    
+        
     except Exception as e:
         st.error(f"Error updating card values: {str(e)}")
         return 0, 0
@@ -271,6 +337,7 @@ def display_add_card_form():
     if 'prefilled_card' in st.session_state:
         st.info("Card details pre-populated from market analysis. Please review and complete the form.")
     
+    # Create form
     with st.form("add_card_form"):
         col1, col2 = st.columns(2)
         
@@ -321,130 +388,132 @@ def display_add_card_form():
         submitted = st.form_submit_button("Add Card")
         
         if submitted:
+            # Create placeholder for status messages
+            status_message = st.empty()
+            
             # Validate required fields
             if not player_name or not year or not card_set:
-                st.error("Please fill in all required fields (Player Name, Year, Card Set)")
+                status_message.error("Please fill in all required fields (Player Name, Year, Card Set)")
                 return
             
             try:
-                # Create new card
-                new_card = {
-                    'player_name': player_name,
-                    'year': year,
-                    'card_set': card_set,
-                    'card_number': card_number,
-                    'variation': variation,
-                    'condition': condition,
-                    'purchase_price': float(purchase_price),
-                    'current_value': float(current_value),
-                    'purchase_date': purchase_date.strftime('%Y-%m-%d'),
-                    'notes': notes,
-                    'tags': [tag.strip() for tag in tags.split(',') if tag.strip()],
-                    'last_updated': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-                }
-                
-                # Handle photo
-                if prefilled.get('photo'):
-                    new_card['photo'] = prefilled['photo']
-                elif photo:
-                    # Process image with PIL
-                    img = Image.open(photo)
+                with st.spinner("Adding card to collection..."):
+                    # Create new card
+                    new_card = {
+                        'player_name': player_name,
+                        'year': year,
+                        'card_set': card_set,
+                        'card_number': card_number,
+                        'variation': variation,
+                        'condition': condition,
+                        'purchase_price': float(purchase_price),
+                        'current_value': float(current_value),
+                        'purchase_date': purchase_date.strftime('%Y-%m-%d'),
+                        'notes': notes,
+                        'tags': [tag.strip() for tag in tags.split(',') if tag.strip()],
+                        'last_updated': datetime.now().isoformat(),
+                        'created_at': datetime.now().strftime('%Y-%m-%d')  # Consistent format for recent additions
+                    }
                     
-                    # First try with normal compression
-                    buffer = BytesIO()
-                    img.thumbnail((400, 500))
-                    if img.mode != 'RGB':
-                        img = img.convert('RGB')
-                    img.save(buffer, format="JPEG", quality=50, optimize=True)
-                    encoded_image = base64.b64encode(buffer.getvalue()).decode()
-                    
-                    # If image is still too large, compress more aggressively
-                    if len(encoded_image) > 900000:
+                    # Handle photo
+                    if prefilled.get('photo'):
+                        new_card['photo'] = prefilled['photo']
+                    elif photo:
+                        # Process image with PIL
+                        img = Image.open(photo)
+                        
+                        # First try with normal compression
                         buffer = BytesIO()
-                        img.thumbnail((300, 375))  # Reduce dimensions further
-                        img.save(buffer, format="JPEG", quality=30, optimize=True)  # Reduce quality further
+                        img.thumbnail((400, 500))
+                        if img.mode != 'RGB':
+                            img = img.convert('RGB')
+                        img.save(buffer, format="JPEG", quality=50, optimize=True)
                         encoded_image = base64.b64encode(buffer.getvalue()).decode()
                         
-                        # If still too large, try one more time with even more compression
+                        # If image is still too large, compress more aggressively
                         if len(encoded_image) > 900000:
                             buffer = BytesIO()
-                            img.thumbnail((200, 250))  # Reduce dimensions even further
-                            img.save(buffer, format="JPEG", quality=20, optimize=True)  # Reduce quality even further
+                            img.thumbnail((300, 375))  # Reduce dimensions further
+                            img.save(buffer, format="JPEG", quality=30, optimize=True)  # Reduce quality further
                             encoded_image = base64.b64encode(buffer.getvalue()).decode()
-                    
-                    new_card['photo'] = f"data:image/jpeg;base64,{encoded_image}"
-                
-                # Initialize collection if not exists
-                if 'collection' not in st.session_state:
-                    st.session_state.collection = []
-                
-                # Convert DataFrame to list if needed
-                if isinstance(st.session_state.collection, pd.DataFrame):
-                    st.session_state.collection = st.session_state.collection.to_dict('records')
-                
-                # Create a function to check if a card already exists
-                def card_exists(card, collection):
-                    """Check if a card already exists in the collection"""
-                    try:
-                        # Get card attributes, handling both Card objects and dictionaries
-                        if hasattr(card, 'player_name'):
-                            card_name = card.player_name
-                            card_year = card.year
-                            card_set = card.card_set
-                            card_number = card.card_number
-                        else:
-                            card_name = card.get('player_name')
-                            card_year = card.get('year')
-                            card_set = card.get('card_set')
-                            card_number = card.get('card_number')
-                        
-                        # Check against existing cards
-                        for existing_card in collection:
-                            if hasattr(existing_card, 'player_name'):
-                                existing_name = existing_card.player_name
-                                existing_year = existing_card.year
-                                existing_set = existing_card.card_set
-                                existing_number = existing_card.card_number
-                            else:
-                                existing_name = existing_card.get('player_name')
-                                existing_year = existing_card.get('year')
-                                existing_set = existing_card.get('card_set')
-                                existing_number = existing_card.get('card_number')
                             
-                            if (card_name == existing_name and 
-                                card_year == existing_year and 
-                                card_set == existing_set and 
-                                card_number == existing_number):
-                                return True
-                        return False
-                    except Exception as e:
-                        print(f"Error checking if card exists: {str(e)}")
-                        print(f"Card data: {card}")
-                        return False
+                            # If still too large, try one more time with even more compression
+                            if len(encoded_image) > 900000:
+                                buffer = BytesIO()
+                                img.thumbnail((200, 250))  # Reduce dimensions even further
+                                img.save(buffer, format="JPEG", quality=20, optimize=True)  # Reduce quality even further
+                                encoded_image = base64.b64encode(buffer.getvalue()).decode()
+                        
+                        new_card['photo'] = f"data:image/jpeg;base64,{encoded_image}"
+                    
+                    # Initialize collection if not exists
+                    if 'collection' not in st.session_state:
+                        st.session_state.collection = []
+                    
+                    # Convert DataFrame to list if needed
+                    if isinstance(st.session_state.collection, pd.DataFrame):
+                        st.session_state.collection = st.session_state.collection.to_dict('records')
+                    
+                    # Check for duplicates more efficiently
+                    is_duplicate = False
+                    for existing_card in st.session_state.collection:
+                        existing_player = safe_get(existing_card, 'player_name', '')
+                        existing_year = safe_get(existing_card, 'year', '')
+                        existing_set = safe_get(existing_card, 'card_set', '')
+                        existing_number = safe_get(existing_card, 'card_number', '')
+                        
+                        if (player_name == existing_player and 
+                            year == existing_year and 
+                            card_set == existing_set and 
+                            card_number == existing_number):
+                            is_duplicate = True
+                            status_message.warning(f"This card already exists in your collection: {player_name} {year} {card_set} #{card_number}")
+                            time.sleep(2)  # Give time to read the message
+                            break
+                    
+                    if not is_duplicate:
+                        # Add the new card
+                        st.session_state.collection.append(new_card)
+                        
+                        # Save to Firebase
+                        if save_collection_to_firebase():
+                            # Show success message
+                            status_message.success(f"Card added successfully: {player_name} {year} {card_set} #{card_number}")
+                            
+                            # Update the Firebase version and modified timestamp
+                            db = firebase_manager.db
+                            db.collection('users').document(st.session_state.uid).update({
+                                'last_modified': datetime.now().isoformat(),
+                                'collection_version': firestore.Increment(1),  # Increment version number
+                                'last_card_added_at': datetime.now().isoformat()  # Add timestamp for recent activity
+                            })
+                            
+                            # Force a refresh of the collection data on next load
+                            if 'last_refresh' in st.session_state:
+                                del st.session_state.last_refresh
+                            
+                            # Clear pre-populated data
+                            if 'prefilled_card' in st.session_state:
+                                del st.session_state.prefilled_card
+                            
+                            # Set up for redirection to View Collection tab with Grid View
+                            st.session_state.current_tab = "View Collection"
+                            st.session_state.view_mode = "Grid View"
+                            st.session_state.refresh_required = True
+                            
+                            # Give user time to see success message
+                            time.sleep(1.5)
+                            
+                            # Rerun the app to apply changes
+                            st.rerun()
+                        else:
+                            status_message.error("Failed to save card to database. Please try again.")
+                    else:
+                        # Already showed duplicate warning
+                        pass
                 
-                # Filter out duplicates
-                new_cards = [card for card in [new_card] if not card_exists(card, st.session_state.collection)]
-                
-                if len(new_cards) < 1:
-                    st.warning("Skipped 0 duplicate cards.")
-                
-                # Append only new cards to existing collection
-                st.session_state.collection = st.session_state.collection + new_cards
-                
-                # Save to Firebase
-                if save_collection_to_firebase():
-                    st.success("Card added successfully!")
-                    # Clear pre-populated data
-                    if 'prefilled_card' in st.session_state:
-                        del st.session_state.prefilled_card
-                    # Switch back to View Collection tab
-                    st.session_state.current_tab = "View Collection"
-                    st.rerun()
-                else:
-                    st.error("Failed to save card to database. Please try again.")
-            
             except Exception as e:
-                st.error(f"Error adding card: {str(e)}")
+                status_message.error(f"Error adding card: {str(e)}")
                 st.write("Debug: Error traceback:", traceback.format_exc())
 
 def generate_share_link(collection_data):
@@ -510,18 +579,19 @@ def display_collection_summary(filtered_collection):
         return
     
     # Calculate summary metrics with proper type conversion
-    total_value = sum(
-        float(card.get('current_value', 0)) if isinstance(card, dict)
-        else float(getattr(card, 'current_value', 0)) if hasattr(card, 'current_value')
-        else 0.0
-        for card in filtered_collection
-    )
-    total_cost = sum(
-        float(card.get('purchase_price', 0)) if isinstance(card, dict)
-        else float(getattr(card, 'purchase_price', 0)) if hasattr(card, 'purchase_price')
-        else 0.0
-        for card in filtered_collection
-    )
+    total_value = 0.0
+    total_cost = 0.0
+    
+    for card in filtered_collection:
+        # Get purchase price and current value using safe_get
+        purchase_price = safe_get(card, 'purchase_price', 0)
+        current_value = safe_get(card, 'current_value', 0)
+        
+        # Add to totals (safe_get now handles float conversion)
+        total_cost += float(purchase_price or 0)  # Handle None values
+        total_value += float(current_value or 0)  # Handle None values
+    
+    # Calculate ROI
     total_roi = ((total_value - total_cost) / total_cost * 100) if total_cost > 0 else 0
     
     # Display metrics in a mobile-friendly layout
@@ -533,7 +603,7 @@ def display_collection_summary(filtered_collection):
             st.metric("Total Value", f"${total_value:,.2f}")
         with col2:
             st.metric("Total Cost", f"${total_cost:,.2f}")
-            st.metric("Overall ROI", f"{total_roi:,.1f}%")
+            st.metric("Total ROI", f"{total_roi:.1f}%")
 
 def _convert_condition_to_index(condition):
     """Convert condition string to index in our condition list"""
@@ -602,91 +672,74 @@ def edit_card_form(card_index, card_data):
             card_set = st.text_input("Card Set", value=safe_get(card_dict, 'card_set', ''), key="edit_card_set")
             card_number = st.text_input("Card Number", value=safe_get(card_dict, 'card_number', ''), key="edit_card_number")
             variation = st.text_input("Variation", value=safe_get(card_dict, 'variation', ''), key="edit_variation")
-        
-        with col2:
-            # Get the current condition
-            current_condition = safe_get(card_dict, 'condition', 'Raw')
-            
-            # Define all possible conditions
-            conditions = ["Raw", "PSA 1", "PSA 2", "PSA 3", "PSA 4", "PSA 5", "PSA 6", "PSA 7", "PSA 8", "PSA 9", "PSA 10", "Graded Other"]
-            
-            # Find the index of the current condition, default to 0 if not found
-            try:
-                condition_index = conditions.index(current_condition)
-            except ValueError:
-                condition_index = 0
-            
             condition = st.selectbox(
                 "Condition",
-                conditions,
-                index=condition_index,
+                options=["Raw", "PSA 1", "PSA 2", "PSA 3", "PSA 4", "PSA 5", "PSA 6", "PSA 7", "PSA 8", "PSA 9", "PSA 10"],
+                index=["Raw", "PSA 1", "PSA 2", "PSA 3", "PSA 4", "PSA 5", "PSA 6", "PSA 7", "PSA 8", "PSA 9", "PSA 10"].index(safe_get(card_dict, 'condition', 'Raw')),
                 key="edit_condition"
             )
+            
+        with col2:
             purchase_price = st.number_input(
-                "Purchase Price",
+                "Purchase Price ($)",
                 min_value=0.0,
-                step=0.01,
                 value=float(safe_get(card_dict, 'purchase_price', 0)),
                 key="edit_purchase_price"
             )
+            current_value = st.number_input(
+                "Current Value ($)",
+                min_value=0.0,
+                value=float(safe_get(card_dict, 'current_value', 0)),
+                key="edit_current_value"
+            )
+            
+            # Handle purchase date with proper parsing
+            purchase_date_str = safe_get(card_dict, 'purchase_date', datetime.now().strftime('%Y-%m-%d'))
+            try:
+                # Try to parse the date, handling different formats
+                if 'T' in purchase_date_str:
+                    purchase_date = datetime.fromisoformat(purchase_date_str.split('T')[0]).date()
+                else:
+                    purchase_date = datetime.strptime(purchase_date_str, '%Y-%m-%d').date()
+            except (ValueError, TypeError):
+                purchase_date = datetime.now().date()
+                
             purchase_date = st.date_input(
                 "Purchase Date",
-                value=_parse_date(safe_get(card_dict, 'purchase_date')),
+                value=purchase_date,
                 key="edit_purchase_date"
             )
+            
             notes = st.text_area("Notes", value=safe_get(card_dict, 'notes', ''), key="edit_notes")
+            
+            # Handle tags with proper default value
+            tags_value = safe_get(card_dict, 'tags', [])
+            if not isinstance(tags_value, list):
+                tags_value = []
             tags = st.text_input(
-                "Tags (comma-separated)",
-                value=', '.join(safe_get(card_dict, 'tags', [])),
-                key="edit_tags"
-            )
-        
-        photo = st.file_uploader("Upload New Photo", type=["jpg", "jpeg", "png"], key="edit_photo")
-        
-        # Create two columns for buttons
-        col1, col2, col3 = st.columns([1, 1, 1])
-        
-        with col1:
-            # Add submit button
-            submitted = st.form_submit_button("Save Changes")
-        
-        with col2:
-            # Add cancel button
-            if st.form_submit_button("Cancel"):
-                st.session_state.editing_card = None
-                st.session_state.editing_data = None
-                st.rerun()
-        
-        with col3:
-            # Add delete button
-            if st.form_submit_button("Delete Card"):
-                # Generate card_id from the card data
-                card_id = f"{card_dict['player_name']}_{card_dict['year']}_{card_dict['card_set']}_{card_dict['card_number']}".replace(" ", "_").lower()
-                if delete_card(card_id):
-                    st.session_state.editing_card = None
-                    st.session_state.editing_data = None
-                    st.rerun()
-        
-        if submitted:
-            # Validate required fields
-            if not player_name or not year or not card_set:
-                st.error("Please fill in all required fields (Player Name, Year, Card Set)")
-                return
-            
-            # Get current value
-            card_details = search_card_details(
-                player_name,
-                year,
-                card_set,
-                card_number,
-                variation,
-                condition
+                "Tags (comma-separated)", 
+                value=','.join(tags_value), 
+                key="edit_tags",
+                help="Enter tags separated by commas"
             )
             
-            if not card_details:
-                st.error("Could not determine current value for this card")
-                return
+            # Display current image if exists
+            current_photo = safe_get(card_dict, 'photo', '')
+            if current_photo:
+                st.image(current_photo, caption="Current Card Image", use_container_width=True)
             
+            # Add image upload
+            new_photo = st.file_uploader("Upload New Photo", type=["jpg", "jpeg", "png"], key="edit_photo")
+        
+        # Create two columns for the buttons
+        button_col1, button_col2 = st.columns(2)
+        
+        with button_col1:
+            update_button = st.form_submit_button("Update Card")
+        with button_col2:
+            delete_button = st.form_submit_button("🗑️ Delete Card", type="secondary")
+        
+        if update_button:
             # Update card data
             updated_card = {
                 'player_name': player_name,
@@ -697,18 +750,18 @@ def edit_card_form(card_index, card_data):
                 'condition': condition,
                 'purchase_price': purchase_price,
                 'purchase_date': purchase_date.strftime('%Y-%m-%d'),
-                'current_value': card_details['current_value'],
-                'last_updated': card_details['last_updated'],
+                'current_value': current_value,
+                'last_updated': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
                 'notes': notes,
-                'roi': ((card_details['current_value'] - purchase_price) / purchase_price * 100) if purchase_price > 0 else 0,
+                'roi': ((current_value - purchase_price) / purchase_price * 100) if purchase_price > 0 else 0,
                 'tags': [tag.strip() for tag in tags.split(',') if tag.strip()]
             }
             
-            # Handle photo upload
-            if photo:
+            # Handle photo update
+            if new_photo:
                 try:
                     # Process image with PIL
-                    img = Image.open(photo)
+                    img = Image.open(new_photo)
                     
                     # First try with normal compression
                     buffer = BytesIO()
@@ -734,25 +787,39 @@ def edit_card_form(card_index, card_data):
                     
                     updated_card['photo'] = f"data:image/jpeg;base64,{encoded_image}"
                 except Exception as e:
-                    st.warning(f"Warning: Could not process uploaded image. Error: {str(e)}")
+                    st.error(f"Error processing image: {str(e)}")
+                    return
+            elif current_photo:
+                # Keep existing photo if no new one uploaded
+                updated_card['photo'] = current_photo
             
             # Update the card in the collection
-            if hasattr(st.session_state.collection[card_index], 'to_dict'):
-                # If it's a Card object, update its attributes
-                for key, value in updated_card.items():
-                    setattr(st.session_state.collection[card_index], key, value)
-            else:
-                # If it's a dictionary, update it directly
-                st.session_state.collection[card_index].update(updated_card)
-            
-            # Save changes to Firebase
-            if save_collection_to_firebase():
+            if update_card(card_index, updated_card):
                 st.success("Card updated successfully!")
                 st.session_state.editing_card = None
                 st.session_state.editing_data = None
+                # Set redirection to View Collection tab with Grid View
+                st.session_state.current_tab = "View Collection"
+                st.session_state.view_mode = "Grid View"
                 st.rerun()
             else:
-                st.error("Failed to save changes to database.")
+                st.error("Failed to update card.")
+                
+        if delete_button:
+            # Generate card_id for deletion
+            card_id = f"{player_name}_{year}_{card_set}_{card_number}".replace(" ", "_").lower()
+            
+            # Attempt to delete the card
+            if delete_card(card_id):
+                st.success("Card deleted successfully!")
+                st.session_state.editing_card = None
+                st.session_state.editing_data = None
+                # Set redirection to View Collection tab with Grid View
+                st.session_state.current_tab = "View Collection"
+                st.session_state.view_mode = "Grid View"
+                st.rerun()
+            else:
+                st.error("Failed to delete card.")
 
 def load_collection_from_firebase():
     """Load the collection from Firebase"""
@@ -770,15 +837,158 @@ def load_collection_from_firebase():
                 st.error("Failed to connect to Firebase. Please try again later.")
                 return []
         
-        # Get collection using DatabaseService
-        collection = DatabaseService.get_user_collection(st.session_state.uid)
+        # Check if we need to skip cache
+        force_reload = False
+        if 'refresh_required' in st.session_state and st.session_state.refresh_required:
+            force_reload = True
+            st.session_state.refresh_required = False
         
-        if collection is None:
-            st.error("Failed to load collection. Please try again.")
-            return []
+        # Track the last time we refreshed the collection
+        if 'last_refresh' not in st.session_state or force_reload:
+            st.session_state.last_refresh = time.time()
             
-        print(f"Successfully loaded {len(collection)} cards from Firebase")
-        return collection
+            # Get collection using DatabaseService
+            cards = DatabaseService.get_user_collection(st.session_state.uid)
+            
+            if cards is None:
+                st.error("Failed to load collection. Please try again.")
+                return []
+            
+            # Convert Card objects to dictionaries to prevent dataclass conversion errors
+            collection = []
+            for card in cards:
+                try:
+                    card_dict = None
+                    if hasattr(card, 'to_dict') and callable(getattr(card, 'to_dict')):
+                        # Handle Card objects
+                        try:
+                            card_dict = card.to_dict()
+                        except Exception as dict_err:
+                            print(f"Error in Card.to_dict(): {str(dict_err)}")
+                            # Fallback: try converting the object to dict directly
+                            card_dict = {k: getattr(card, k) for k in dir(card) 
+                                        if not k.startswith('_') and not callable(getattr(card, k))}
+                    elif isinstance(card, dict):
+                        # Already a dict
+                        card_dict = card.copy()
+                    else:
+                        # Try to convert object to dict
+                        try:
+                            card_dict = {k: getattr(card, k) for k in dir(card) 
+                                        if not k.startswith('_') and not callable(getattr(card, k))}
+                        except:
+                            print(f"Could not convert object of type {type(card)} to dictionary")
+                            continue
+                    
+                    # Clean and normalize the card data
+                    if card_dict:
+                        # Ensure all fields are proper Python types (not pandas/numpy)
+                        cleaned_dict = clean_nan_values(card_dict)
+                        
+                        # Ensure basic fields exist
+                        if 'player_name' not in cleaned_dict or cleaned_dict['player_name'] is None:
+                            print(f"Skipping card with no player_name")
+                            continue
+                            
+                        collection.append(cleaned_dict)
+                    
+                except Exception as e:
+                    print(f"Error converting card: {str(e)}")
+                    print(f"Card type: {type(card)}")
+                    if hasattr(card, '__dict__'):
+                        print(f"Card attributes: {card.__dict__}")
+                    continue
+            
+            print(f"Successfully loaded {len(collection)} cards from Firebase")
+            return collection
+        else:
+            # Check if it's been more than 5 minutes since last refresh
+            current_time = time.time()
+            if current_time - st.session_state.last_refresh > 300:  # 300 seconds = 5 minutes
+                st.session_state.last_refresh = current_time
+                cards = DatabaseService.get_user_collection(st.session_state.uid)
+                if cards is None:
+                    return []
+                    
+                # Convert Card objects to dictionaries with same robust handling
+                collection = []
+                for card in cards:
+                    try:
+                        card_dict = None
+                        if hasattr(card, 'to_dict') and callable(getattr(card, 'to_dict')):
+                            try:
+                                card_dict = card.to_dict()
+                            except Exception as dict_err:
+                                print(f"Error in Card.to_dict(): {str(dict_err)}")
+                                card_dict = {k: getattr(card, k) for k in dir(card) 
+                                           if not k.startswith('_') and not callable(getattr(card, k))}
+                        elif isinstance(card, dict):
+                            card_dict = card.copy()
+                        else:
+                            try:
+                                card_dict = {k: getattr(card, k) for k in dir(card) 
+                                           if not k.startswith('_') and not callable(getattr(card, k))}
+                            except:
+                                continue
+                        
+                        if card_dict:
+                            cleaned_dict = clean_nan_values(card_dict)
+                            
+                            # Ensure basic fields exist
+                            if 'player_name' not in cleaned_dict or cleaned_dict['player_name'] is None:
+                                continue
+                                
+                            collection.append(cleaned_dict)
+                    except Exception as e:
+                        print(f"Error auto-refresh converting card: {str(e)}")
+                        continue
+                
+                print(f"Auto-refreshed {len(collection)} cards from Firebase")
+                return collection
+            else:
+                # Use existing collection
+                if hasattr(st.session_state, 'collection') and st.session_state.collection:
+                    return st.session_state.collection
+                else:
+                    cards = DatabaseService.get_user_collection(st.session_state.uid)
+                    if cards is None:
+                        return []
+                        
+                    # Convert Card objects to dictionaries with same robust handling
+                    collection = []
+                    for card in cards:
+                        try:
+                            card_dict = None
+                            if hasattr(card, 'to_dict') and callable(getattr(card, 'to_dict')):
+                                try:
+                                    card_dict = card.to_dict()
+                                except Exception as dict_err:
+                                    print(f"Error in Card.to_dict(): {str(dict_err)}")
+                                    card_dict = {k: getattr(card, k) for k in dir(card) 
+                                               if not k.startswith('_') and not callable(getattr(card, k))}
+                            elif isinstance(card, dict):
+                                card_dict = card.copy()
+                            else:
+                                try:
+                                    card_dict = {k: getattr(card, k) for k in dir(card) 
+                                               if not k.startswith('_') and not callable(getattr(card, k))}
+                                except:
+                                    continue
+                            
+                            if card_dict:
+                                cleaned_dict = clean_nan_values(card_dict)
+                                
+                                # Ensure basic fields exist
+                                if 'player_name' not in cleaned_dict or cleaned_dict['player_name'] is None:
+                                    continue
+                                    
+                                collection.append(cleaned_dict)
+                        except Exception as e:
+                            print(f"Error fallback converting card: {str(e)}")
+                            continue
+                    
+                    print(f"Loading {len(collection)} cards from Firebase (no cached collection)")
+                    return collection
         
     except Exception as e:
         print(f"Error loading collection: {str(e)}")
@@ -800,16 +1010,77 @@ def save_collection_to_firebase():
         cards = []
         for card in st.session_state.collection:
             try:
+                # Prepare card dictionary
                 if hasattr(card, 'to_dict'):
                     card_dict = card.to_dict()
                 else:
-                    card_dict = card
-                cards.append(Card.from_dict(card_dict))
+                    card_dict = card.copy() if isinstance(card, dict) else {}
+                
+                # Clean up card data before conversion
+                try:
+                    # Ensure dates are in the correct format
+                    for date_field in ['purchase_date', 'last_updated', 'created_at']:
+                        if date_field in card_dict:
+                            if isinstance(card_dict[date_field], (pd.Series, np.ndarray)):
+                                # Convert array to string
+                                if hasattr(card_dict[date_field], 'size') and card_dict[date_field].size > 0:
+                                    card_dict[date_field] = str(card_dict[date_field].item(0))
+                                else:
+                                    card_dict[date_field] = datetime.now().isoformat()
+                            elif pd.isna(card_dict[date_field]) or card_dict[date_field] is None:
+                                card_dict[date_field] = datetime.now().isoformat()
+                    
+                    # Ensure tags is a list
+                    if 'tags' in card_dict:
+                        if isinstance(card_dict['tags'], (pd.Series, np.ndarray)):
+                            # Convert to list
+                            card_dict['tags'] = card_dict['tags'].tolist() if hasattr(card_dict['tags'], 'tolist') else list(card_dict['tags'])
+                        elif isinstance(card_dict['tags'], str):
+                            # Parse string to list
+                            card_dict['tags'] = [tag.strip() for tag in card_dict['tags'].split(',') if tag.strip()]
+                        elif card_dict['tags'] is None:
+                            card_dict['tags'] = []
+                    else:
+                        card_dict['tags'] = []
+                    
+                    # Ensure numeric fields are proper numbers
+                    for num_field in ['purchase_price', 'current_value', 'roi']:
+                        if num_field in card_dict:
+                            if isinstance(card_dict[num_field], (pd.Series, np.ndarray)):
+                                # Convert array to float
+                                if hasattr(card_dict[num_field], 'size') and card_dict[num_field].size > 0:
+                                    card_dict[num_field] = float(card_dict[num_field].item(0))
+                                else:
+                                    card_dict[num_field] = 0.0
+                            elif pd.isna(card_dict[num_field]) or card_dict[num_field] is None:
+                                card_dict[num_field] = 0.0
+                            else:
+                                # Try to convert to float
+                                try:
+                                    card_dict[num_field] = float(card_dict[num_field])
+                                except:
+                                    card_dict[num_field] = 0.0
+                
+                    # Finally convert to Card object
+                    card_obj = Card.from_dict(card_dict)
+                    cards.append(card_obj)
+                
+                except Exception as prep_err:
+                    print(f"Error preparing card data: {str(prep_err)}")
+                    print(f"Card data that failed preparation: {card_dict}")
+                    continue
+                
             except Exception as e:
                 print(f"Error converting card to Card object: {str(e)}")
+                print(f"Card data that failed conversion: {card if isinstance(card, dict) else 'Non-dict card'}")
                 continue
         
         # Save collection using DatabaseService
+        if not cards:
+            print("Warning: No valid Card objects to save")
+            return False
+            
+        print(f"Attempting to save {len(cards)} cards to Firebase")
         success = DatabaseService.save_user_collection(st.session_state.uid, cards)
         
         if success:
@@ -848,74 +1119,171 @@ def display_collection_grid(filtered_collection):
         )
     )
 
-def display_collection_table(filtered_collection):
+def display_collection_table(collection: List[Dict]):
     """Display collection in a table format."""
-    if filtered_collection is None or (isinstance(filtered_collection, pd.DataFrame) and filtered_collection.empty) or (isinstance(filtered_collection, list) and len(filtered_collection) == 0):
+    if not collection:
         st.info("No cards to display")
         return
     
-    # Convert collection to DataFrame for display
-    df = pd.DataFrame([
-        card.to_dict() if hasattr(card, 'to_dict') else card 
-        for card in filtered_collection
-    ])
+    # Convert the collection to a list of dictionaries first
+    try:
+        # Convert each item to a dictionary regardless of its type
+        collection_dicts = []
+        for card in collection:
+            if hasattr(card, 'to_dict') and callable(getattr(card, 'to_dict')):
+                # Card objects with to_dict method
+                collection_dicts.append(card.to_dict())
+            elif isinstance(card, dict):
+                # Already a dictionary
+                collection_dicts.append(card)
+            elif hasattr(card, '__dict__'):
+                # General object with attributes
+                collection_dicts.append(card.__dict__)
+            else:
+                # Skip items that can't be converted
+                st.warning(f"Skipped item of type {type(card)} that cannot be converted to dictionary")
+                continue
+        
+        # Convert to DataFrame only after ensuring all items are dictionaries
+        df = pd.DataFrame(collection_dicts)
+        
+        if df.empty:
+            st.warning("No valid cards to display after conversion")
+            return
+            
+    except Exception as e:
+        st.error(f"Error converting collection to DataFrame: {str(e)}")
+        st.write("Debug info: Collection type:", type(collection))
+        if collection:
+            st.write(f"First item type: {type(collection[0])}")
+        return
     
-    # Ensure tags are always lists
-    if 'tags' in df.columns:
-        df['tags'] = df['tags'].apply(lambda x: x if isinstance(x, list) else [x] if pd.notna(x) else [])
+    # Ensure all required columns exist
+    required_columns = ['player_name', 'year', 'card_set', 'condition', 'purchase_price', 'current_value', 'tags']
+    for col in required_columns:
+        if col not in df.columns:
+            df[col] = None
     
-    # Define column order and configuration
-    column_config = {
-        "player_name": st.column_config.TextColumn("Player Name", width="medium"),
-        "year": st.column_config.TextColumn("Year", width="small"),
-        "card_set": st.column_config.TextColumn("Card Set", width="medium"),
-        "card_number": st.column_config.TextColumn("Card #", width="small"),
-        "variation": st.column_config.TextColumn("Variation", width="medium"),
-        "condition": st.column_config.TextColumn("Condition", width="medium"),
-        "purchase_price": st.column_config.NumberColumn("Purchase Price", format="$%.2f", width="small"),
-        "current_value": st.column_config.NumberColumn("Current Value", format="$%.2f", width="small"),
-        "roi": st.column_config.NumberColumn("ROI", format="%.1f%%", width="small"),
-        "purchase_date": st.column_config.DateColumn("Purchase Date", format="YYYY-MM-DD", width="small"),
-        "last_updated": st.column_config.DatetimeColumn("Last Updated", format="YYYY-MM-DD HH:mm", width="medium"),
-        "notes": st.column_config.TextColumn("Notes", width="large"),
-        "tags": st.column_config.ListColumn("Tags", width="medium"),
-        "photo": st.column_config.ImageColumn("Photo", width="small")
+    # Format the DataFrame for display
+    df_display = df.copy()
+    
+    # Format numeric columns
+    df_display['purchase_price'] = df_display['purchase_price'].apply(lambda x: f"${x:,.2f}" if pd.notnull(x) else "")
+    # Use current_value instead of ebay_value
+    if 'current_value' in df_display.columns:
+        df_display['current_value'] = df_display['current_value'].apply(lambda x: f"${x:,.2f}" if pd.notnull(x) else "")
+    
+    # Process tags column
+    def format_tags(tags):
+        if pd.isna(tags):
+            return ""
+        if isinstance(tags, str):
+            try:
+                # Try to parse as JSON/list
+                parsed = ast.literal_eval(tags)
+                if isinstance(parsed, list):
+                    return ", ".join(str(tag).strip() for tag in parsed if tag)
+                else:
+                    return tags
+            except:
+                return tags
+        elif isinstance(tags, list):
+            return ", ".join(str(tag).strip() for tag in tags if tag)
+        return str(tags)
+    
+    df_display['tags'] = df_display['tags'].apply(format_tags)
+    
+    # Select and order columns for display (use current_value instead of ebay_value)
+    display_columns = ['player_name', 'year', 'card_set', 'condition', 'purchase_price', 'current_value', 'tags']
+    # Ensure all columns exist
+    for col in display_columns:
+        if col not in df_display.columns:
+            df_display[col] = ""
+            
+    df_display = df_display[display_columns]
+    
+    # Rename columns for display
+    column_names = {
+        'player_name': 'Player',
+        'year': 'Year',
+        'card_set': 'Set',
+        'condition': 'Condition',
+        'purchase_price': 'Purchase Price',
+        'current_value': 'Current Value',
+        'tags': 'Tags'
     }
+    df_display = df_display.rename(columns=column_names)
     
-    # Reorder columns to match the desired display order
-    column_order = [
-        "player_name", "year", "card_set", "card_number", "variation", 
-        "condition", "purchase_price", "current_value", "roi", 
-        "purchase_date", "last_updated", "notes", "tags", "photo"
-    ]
-    
-    # Filter columns to only those that exist in the DataFrame
-    column_order = [col for col in column_order if col in df.columns]
-    
-    # Display table with specified configuration
+    # Display the table
     st.dataframe(
-        df[column_order],
+        df_display,
         use_container_width=True,
         hide_index=True,
-        column_config=column_config
+        column_config={
+            "Player": st.column_config.TextColumn("Player", width="medium"),
+            "Year": st.column_config.TextColumn("Year", width="small"),
+            "Set": st.column_config.TextColumn("Set", width="medium"),
+            "Condition": st.column_config.TextColumn("Condition", width="small"),
+            "Purchase Price": st.column_config.TextColumn("Purchase Price", width="small"),
+            "Current Value": st.column_config.TextColumn("Current Value", width="small"),
+            "Tags": st.column_config.TextColumn("Tags", width="large")
+        }
     )
 
 def has_cards(collection):
     """Check if collection has any cards"""
-    if collection is None:
+    try:
+        if collection is None:
+            return False
+            
+        if isinstance(collection, pd.DataFrame):
+            # Explicit check to avoid DataFrame truthiness issues
+            return len(collection) > 0 and not collection.empty
+            
+        if isinstance(collection, list):
+            return len(collection) > 0
+            
+        # Handle other iterable types
+        try:
+            return len(collection) > 0
+        except (TypeError, AttributeError):
+            # Not an iterable or doesn't have a length
+            return False
+    except Exception as e:
+        print(f"Error in has_cards: {str(e)}")
         return False
-    if isinstance(collection, pd.DataFrame):
-        return not collection.empty
-    return len(collection) > 0
 
 def safe_get(card, key, default=None):
     """Safely get a value from a card, whether it's a Card object or dictionary."""
-    if hasattr(card, 'to_dict'):
-        card_dict = card.to_dict()
-        return card_dict.get(key, default)
-    elif isinstance(card, dict):
-        return card.get(key, default)
-    return default
+    try:
+        # Handle Card objects
+        if hasattr(card, 'to_dict'):
+            card_dict = card.to_dict()
+            value = card_dict.get(key, default)
+        # Handle dictionaries
+        elif isinstance(card, dict):
+            value = card.get(key, default)
+        else:
+            value = getattr(card, key, default)
+        
+        # Handle numeric values specifically
+        if key in ['purchase_price', 'current_value']:
+            try:
+                # Handle various types of numeric values
+                if value is None or pd.isna(value):
+                    return float(default or 0)
+                if isinstance(value, str):
+                    # Remove any currency symbols and commas
+                    value = value.replace('$', '').replace(',', '').strip()
+                return float(value)
+            except (ValueError, TypeError) as e:
+                print(f"Error converting {key} value '{value}' to float: {str(e)}")
+                return float(default or 0)
+        
+        return value
+    except Exception as e:
+        print(f"Error in safe_get for key {key}: {str(e)}")
+        return default
 
 def display_collection():
     """Display the collection view."""
@@ -1005,56 +1373,211 @@ def delete_card(card_id: str) -> bool:
         firebase_manager = FirebaseManager.get_instance()
         if not firebase_manager._initialized:
             if not firebase_manager.initialize():
-                print("Error: Failed to initialize Firebase")
+                st.error("Failed to initialize Firebase")
                 return False
                 
         db = firebase_manager.db
         if not db:
-            print("Error: Firestore client not initialized")
+            st.error("Firestore client not initialized")
             return False
 
+        # Log deletion attempt (for debugging purposes)
+        print(f"Starting deletion for card ID: {card_id}")
+        
         # Get the user's cards collection reference
         cards_ref = db.collection('users').document(st.session_state.uid).collection('cards')
         
-        # Ensure card_id is a string
-        if not isinstance(card_id, str):
-            card_id = str(card_id)
-        
-        # Delete the card document from Firebase
+        # SIMPLE APPROACH: Try direct deletion first with minimal processing
+        deletion_successful = False
         try:
-            doc_ref = cards_ref.document(card_id)
-            doc = doc_ref.get()
-            if doc.exists:
-                doc_ref.delete()
-                print(f"Successfully deleted card {card_id} from Firebase")
-            else:
-                print(f"Card {card_id} not found in Firebase")
-        except Exception as firebase_error:
-            print(f"Error deleting from Firebase: {str(firebase_error)}")
+            # Try a few common ID formats
+            potential_ids = [
+                card_id,  # Original ID
+                card_id.lower(),  # Lowercase
+                card_id.replace(' ', '_').lower(),  # Replace spaces with underscores
+                "_".join([p.title() for p in card_id.split('_')]),  # Title case
+                "_".join([p.lower() for p in card_id.split('_')])  # All lowercase
+            ]
+            
+            for potential_id in potential_ids:
+                try:
+                    doc_ref = cards_ref.document(potential_id)
+                    doc = doc_ref.get()
+                    if doc.exists:
+                        print(f"Found exact document match with ID: {potential_id}")
+                        doc_ref.delete()
+                        print(f"Deleted card from Firebase with ID: {potential_id}")
+                        deletion_successful = True
+                        break
+                except Exception as e:
+                    print(f"Error trying ID format {potential_id}: {str(e)}")
+                    continue
+                    
+            if deletion_successful:
+                # Update local collection if card exists there
+                if hasattr(st.session_state, 'collection') and st.session_state.collection:
+                    # Create a new list excluding the deleted card
+                    st.session_state.collection = [
+                        card for card in st.session_state.collection 
+                        if not (isinstance(card, dict) and f"{card.get('player_name')}_{card.get('year')}_{card.get('card_set')}_{card.get('card_number')}".replace(" ", "_").lower() == card_id.lower())
+                    ]
+                
+                # Add a timestamp to track the last modification time
+                db.collection('users').document(st.session_state.uid).update({
+                    'last_modified': datetime.now().isoformat(),
+                    'collection_version': firestore.Increment(1)  # Increment version number
+                })
+                
+                # Force a refresh of the collection data on next load
+                if 'last_refresh' in st.session_state:
+                    del st.session_state.last_refresh
+                
+                st.success(f"Card deleted successfully!")
+                # Clear cache and return to view collection
+                st.cache_data.clear()
+                st.session_state.current_tab = "View Collection"
+                st.session_state.view_mode = "Grid View"
+                # Set flag for refreshing on next load
+                st.session_state.refresh_required = True
+                return True
+        except Exception as e:
+            print(f"Error in direct document deletion attempt: {str(e)}")
+            # Continue to the more complex approach if direct deletion failed
+            
+        # BACKUP APPROACH: Parse card details from ID for more complex search
+        parts = card_id.split('_')
+        
+        # Handle different ID formats more robustly
+        if len(parts) < 3:  # At minimum need player_year_set
+            st.warning(f"Invalid card ID format: {card_id}. Please try deleting a different card.")
             return False
+            
+        # Extract components - this is a more flexible approach
+        # First try to find the year part which is most recognizable
+        year_index = None
+        for i, part in enumerate(parts):
+            if part.isdigit() and (len(part) == 4 or len(part) == 2):
+                year_index = i
+                break
         
-        # Remove the card from the local collection
-        if hasattr(st.session_state, 'collection'):
-            # Find the card in the collection and remove it
-            for i, card in enumerate(st.session_state.collection):
-                # Generate the card's ID to compare
-                if hasattr(card, 'to_dict'):
-                    card_dict = card.to_dict()
-                else:
-                    card_dict = card
-                current_card_id = f"{card_dict['player_name']}_{card_dict['year']}_{card_dict['card_set']}_{card_dict['card_number']}".replace(" ", "_").lower()
-                if current_card_id == card_id:
-                    st.session_state.collection.pop(i)
-                    print(f"Successfully removed card {card_id} from local collection")
-                    break
+        if year_index is not None:
+            # We found a year, use it to split other components
+            player_name_parts = parts[:year_index]
+            year = parts[year_index]
+            
+            # The rest might be set and number
+            rest_parts = parts[year_index+1:]
+            
+            # If we have at least 2 more parts, assume the last is card number
+            if len(rest_parts) >= 1:
+                card_set_parts = rest_parts[:-1] if len(rest_parts) > 1 else rest_parts
+                card_number = rest_parts[-1] if len(rest_parts) > 1 else ""
+            else:
+                card_set_parts = rest_parts
+                card_number = ""
+        else:
+            # No obvious year, use a fallback approach
+            if len(parts) >= 3:
+                player_name_parts = [parts[0]]
+                year = parts[1]
+                card_set_parts = parts[2:-1] if len(parts) > 3 else [parts[2]]
+                card_number = parts[-1] if len(parts) > 3 else ""
+            else:
+                # Not enough parts for a valid ID
+                st.warning(f"Cannot parse card ID: {card_id}. Please try a different card.")
+                return False
         
-        # Clear the cache to ensure the collection is reloaded
-        st.cache_data.clear()
+        # Reconstruct the components
+        player_name = " ".join(player_name_parts).replace('_', ' ')
+        card_set = " ".join(card_set_parts).replace('_', ' ')
         
-        return True
+        print(f"Parsed card details - Player: '{player_name}', Year: '{year}', Set: '{card_set}', Number: '{card_number}'")
+        
+        # Search for the card in Firebase by field values
+        try:
+            found = False
+            all_cards = list(cards_ref.stream())
+            print(f"Found {len(all_cards)} cards in Firebase to search")
+            
+            for doc in all_cards:
+                try:
+                    card_data = doc.to_dict()
+                    
+                    # Get card attributes for comparison
+                    db_player = str(card_data.get('player_name', '')).lower()
+                    db_year = str(card_data.get('year', ''))
+                    db_set = str(card_data.get('card_set', '')).lower()
+                    db_number = str(card_data.get('card_number', ''))
+                    
+                    # Check if this is a match (more flexible matching)
+                    player_match = player_name.lower() in db_player or db_player in player_name.lower()
+                    year_match = (
+                        db_year == year or 
+                        (len(year) == 2 and db_year[-2:] == year) or
+                        (len(db_year) == 2 and year[-2:] == db_year)
+                    )
+                    set_match = card_set.lower() in db_set or db_set in card_set.lower()
+                    number_match = not card_number or card_number == db_number
+                    
+                    # More flexible matching for better success rates
+                    if (player_match and year_match) and (set_match or number_match):
+                        try:
+                            print(f"Found matching card with ID: {doc.id}")
+                            cards_ref.document(doc.id).delete()
+                            print(f"Deleted card from Firebase with ID: {doc.id}")
+                            found = True
+                            
+                            # Update local collection
+                            if hasattr(st.session_state, 'collection') and st.session_state.collection:
+                                # Create a new list excluding the deleted card
+                                st.session_state.collection = [
+                                    card for card in st.session_state.collection 
+                                    if not (isinstance(card, dict) and 
+                                            (player_name.lower() in str(card.get('player_name', '')).lower() and
+                                             year == str(card.get('year', '')) and
+                                             (card_set.lower() in str(card.get('card_set', '')).lower() or
+                                              (card_number and card_number == str(card.get('card_number', ''))))))
+                                ]
+                            
+                            # Add a timestamp to track the last modification time
+                            db.collection('users').document(st.session_state.uid).update({
+                                'last_modified': datetime.now().isoformat(),
+                                'collection_version': firestore.Increment(1)  # Increment version number
+                            })
+                            
+                            # Force a refresh of the collection data on next load
+                            if 'last_refresh' in st.session_state:
+                                del st.session_state.last_refresh
+                            
+                            st.success(f"Successfully deleted {player_name} {year} {card_set} #{card_number or 'N/A'}")
+                            # Clear cache and return to view collection
+                            st.cache_data.clear()
+                            st.session_state.current_tab = "View Collection"
+                            st.session_state.view_mode = "Grid View"
+                            # Set flag to refresh UI
+                            st.session_state.refresh_required = True
+                            return True
+                        except Exception as delete_error:
+                            print(f"Error deleting document {doc.id}: {str(delete_error)}")
+                            continue
+                except Exception as card_error:
+                    print(f"Error checking Firebase card {doc.id}: {str(card_error)}")
+                    continue
+            
+            if not found:
+                st.warning(f"Card not found: {player_name} {year} {card_set} #{card_number or 'N/A'}")
+                st.info("Try refreshing your collection by going to a different tab and back.")
+                return False
+                
+        except Exception as e:
+            print(f"Error in Firebase search: {str(e)}")
+            st.warning(f"Error searching Firebase: {str(e)}")
+            return False
+    
     except Exception as e:
-        print(f"Error deleting card: {str(e)}")
-        print(f"Debug: Error traceback: {traceback.format_exc()}")
+        print(f"Exception in delete_card: {str(e)}")
+        print(f"Traceback: {traceback.format_exc()}")
+        st.warning(f"Error while trying to delete card. Please try again.")
         return False
 
 def update_card(card_index, updated_data):
@@ -1075,17 +1598,21 @@ def update_card(card_index, updated_data):
         
         card_id = f"{card_dict['player_name']}_{card_dict['year']}_{card_dict['card_set']}_{card_dict['card_number']}".replace(" ", "_").lower()
         
-        # Update the card in the subcollection
-        cards_ref = db.collection('users').document(st.session_state.uid).collection('cards')
-        cards_ref.document(card_id).set(updated_data)
+        # Update the card in the subcollection using firebase_manager
+        firebase_manager = FirebaseManager.get_instance()
+        if not firebase_manager._initialized:
+            if not firebase_manager.initialize():
+                st.error("Failed to initialize Firebase. Please try again later.")
+                return False
+        
+        # Update the card in Firebase
+        success = firebase_manager.update_card(st.session_state.uid, card_id, updated_data)
+        if not success:
+            st.error("Failed to update card in database")
+            return False
         
         # Update the card in the local collection
         st.session_state.collection[card_index] = updated_data
-        
-        # Update the user document's last_updated timestamp
-        db.collection('users').document(st.session_state.uid).update({
-            'last_updated': datetime.now().isoformat()
-        })
         
         st.success("Card updated successfully!")
         return True
@@ -1098,6 +1625,13 @@ def update_card(card_index, updated_data):
 def add_card(card_data):
     """Add a new card to the collection"""
     try:
+        # Add created_at field for tracking recently added cards
+        current_date = datetime.now()
+        card_data['created_at'] = current_date.strftime('%Y-%m-%d')
+        
+        # Ensure last_updated is also set
+        card_data['last_updated'] = current_date.isoformat()
+            
         # Generate a unique ID for the card
         card_id = f"{card_data['player_name']}_{card_data['year']}_{card_data['card_set']}_{card_data['card_number']}".replace(" ", "_").lower()
         
@@ -1112,15 +1646,26 @@ def add_card(card_data):
         
         # Update the user document's last_updated timestamp
         db.collection('users').document(st.session_state.uid).update({
-            'last_updated': datetime.now().isoformat()
+            'last_updated': current_date.isoformat(),
+            'last_card_added_at': current_date.isoformat()
         })
         
+        # Clear caches and refresh flags to ensure the dashboard updates
+        if 'last_refresh' in st.session_state:
+            del st.session_state.last_refresh
+        st.cache_data.clear()
+        st.session_state.refresh_required = True
+        
         st.success("Card added successfully!")
+        # Switch to View Collection tab
+        st.session_state.current_tab = "View Collection"
+        st.rerun()
         return True
         
     except Exception as e:
         st.error(f"Error adding card: {str(e)}")
-        st.write("Debug: Error traceback:", traceback.format_exc())
+        print(f"Debug - Error adding card: {str(e)}")
+        print(f"Traceback: {traceback.format_exc()}")
         return False
 
 def import_collection(file):
@@ -1136,24 +1681,27 @@ def import_collection(file):
             st.error(f"Missing required columns: {', '.join(missing_columns)}")
             return False
         
-        # Convert DataFrame to list of dictionaries
-        cards = df.to_dict('records')
+        # Convert DataFrame to list of dictionaries and clean NaN values
+        cards = [clean_nan_values(row) for _, row in df.iterrows()]
         
         # Process each card
         for card in cards:
             # Add default values for optional fields
-            if 'purchase_date' not in card or pd.isna(card['purchase_date']):
+            if 'purchase_date' not in card or card['purchase_date'] is None:
                 card['purchase_date'] = datetime.now().isoformat()
-            if 'purchase_price' not in card or pd.isna(card['purchase_price']):
+            if 'purchase_price' not in card or card['purchase_price'] is None:
                 card['purchase_price'] = 0.0
-            if 'notes' not in card or pd.isna(card['notes']):
+            if 'notes' not in card or card['notes'] is None:
                 card['notes'] = ""
-            if 'photo' not in card or pd.isna(card['photo']):
+            if 'photo' not in card or card['photo'] is None:
                 card['photo'] = "https://placehold.co/300x400/e6e6e6/666666.png?text=No+Card+Image"
-            if 'tags' not in card or pd.isna(card['tags']):
+            if 'tags' not in card or card['tags'] is None:
                 card['tags'] = []
-            if 'last_updated' not in card or pd.isna(card['last_updated']):
+            if 'last_updated' not in card or card['last_updated'] is None:
                 card['last_updated'] = datetime.now().isoformat()
+            # Add created_at field if it doesn't exist for imported cards
+            if 'created_at' not in card or card['created_at'] is None:
+                card['created_at'] = datetime.now().strftime('%Y-%m-%d')
             
             # Add the card to the subcollection
             card_id = f"{card['player_name']}_{card['year']}_{card['card_set']}_{card['card_number']}".replace(" ", "_").lower()
@@ -1167,8 +1715,16 @@ def import_collection(file):
         
         # Update the user document's last_updated timestamp
         db.collection('users').document(st.session_state.uid).update({
-            'last_updated': datetime.now().isoformat()
+            'last_updated': datetime.now().isoformat(),
+            'collection_version': firestore.Increment(1),
+            'last_card_added_at': datetime.now().isoformat()
         })
+        
+        # Clear caches and refresh flags to ensure the dashboard updates
+        if 'last_refresh' in st.session_state:
+            del st.session_state.last_refresh
+        st.cache_data.clear()
+        st.session_state.refresh_required = True
         
         st.success(f"Successfully imported {len(cards)} cards!")
         return True
@@ -1181,47 +1737,429 @@ def import_collection(file):
 def export_collection():
     """Export the collection to an Excel file"""
     try:
-        if not st.session_state.collection:
-            st.error("No cards in collection")
+        # Check if collection exists
+        if not hasattr(st.session_state, 'collection'):
+            st.error("No collection found in session state")
             return None
         
-        # Convert collection to DataFrame
-        df = pd.DataFrame([
-            card.to_dict() if hasattr(card, 'to_dict') else card 
-            for card in st.session_state.collection
-        ])
+        # Create a DataFrame representation of the collection, handling different collection types
+        if isinstance(st.session_state.collection, pd.DataFrame):
+            if st.session_state.collection.empty:  # Use .empty instead of direct boolean evaluation
+                st.error("Collection DataFrame is empty - nothing to export")
+                return None
+            df = st.session_state.collection.copy()
+        elif isinstance(st.session_state.collection, list):
+            if not st.session_state.collection:  # Check if list is empty
+                st.error("Collection list is empty - nothing to export")
+                return None
+            
+            # Try to safely convert list of objects/dicts to DataFrame
+            try:
+                collection_dicts = []
+                for card in st.session_state.collection:
+                    if hasattr(card, 'to_dict') and callable(getattr(card, 'to_dict')):
+                        collection_dicts.append(card.to_dict())
+                    elif isinstance(card, dict):
+                        collection_dicts.append(card)
+                    else:
+                        st.warning(f"Skipped card of type {type(card)} that cannot be converted")
+                
+                if not collection_dicts:
+                    st.error("No valid cards to export after conversion")
+                    return None
+                
+                df = pd.DataFrame(collection_dicts)
+            except Exception as e:
+                st.error(f"Failed to convert collection to DataFrame: {str(e)}")
+                st.write("Debug info:", traceback.format_exc())
+                return None
+        else:
+            st.error(f"Unsupported collection type: {type(st.session_state.collection)}")
+            return None
+            
+        # Verify DataFrame is valid
+        if df is None:
+            st.error("Failed to create a valid DataFrame")
+            return None
+            
+        if df.empty:  # Use .empty instead of direct boolean evaluation
+            st.error("DataFrame is empty after processing - nothing to export")
+            return None
         
         # Create Excel file in memory
         output = io.BytesIO()
-        with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-            df.to_excel(writer, index=False, sheet_name='Collection')
-            
-            # Get workbook and worksheet objects
-            workbook = writer.book
-            worksheet = writer.sheets['Collection']
-            
-            # Add formatting
-            header_format = workbook.add_format({
-                'bold': True,
-                'bg_color': '#D9E1F2',
-                'border': 1
-            })
-            
-            # Format headers
-            for col_num, value in enumerate(df.columns.values):
-                worksheet.write(0, col_num, value, header_format)
-                worksheet.set_column(col_num, col_num, 15)  # Set column width
+        try:
+            with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+                df.to_excel(writer, index=False, sheet_name='Collection')
+                
+                # Get workbook and worksheet objects
+                workbook = writer.book
+                worksheet = writer.sheets['Collection']
+                
+                # Add formatting
+                header_format = workbook.add_format({
+                    'bold': True,
+                    'bg_color': '#D9E1F2',
+                    'border': 1
+                })
+                
+                # Format headers
+                for col_num, value in enumerate(df.columns.values):
+                    worksheet.write(0, col_num, value, header_format)
+                    worksheet.set_column(col_num, col_num, 15)  # Set column width
+        except Exception as excel_err:
+            st.error(f"Error creating Excel file: {str(excel_err)}")
+            # Try a simpler export without formatting as fallback
+            try:
+                output = io.BytesIO()
+                df.to_excel(output, index=False)
+                output.seek(0)
+                st.info("Used simplified Excel export due to formatting error")
+            except Exception as simple_err:
+                st.error(f"Even simplified Excel export failed: {str(simple_err)}")
+                return None
         
+        # Reset the buffer position
+        output.seek(0)
         return output.getvalue()
         
     except Exception as e:
         st.error(f"Error exporting collection: {str(e)}")
         st.write("Debug: Error traceback:", traceback.format_exc())
+        # Provide additional debugging information
+        if hasattr(st.session_state, 'collection'):
+            st.write(f"Collection type: {type(st.session_state.collection)}")
+            if isinstance(st.session_state.collection, pd.DataFrame):
+                st.write(f"DataFrame shape: {st.session_state.collection.shape}")
+                st.write(f"DataFrame columns: {list(st.session_state.collection.columns)}")
+            elif isinstance(st.session_state.collection, list):
+                st.write(f"List length: {len(st.session_state.collection)}")
+                if st.session_state.collection:
+                    st.write(f"First item type: {type(st.session_state.collection[0])}")
         return None
+
+def debug_firebase_connection():
+    """Diagnostic function to check Firebase connectivity and card structure"""
+    try:
+        # Get Firebase client
+        firebase_manager = FirebaseManager.get_instance()
+        if not firebase_manager._initialized:
+            if not firebase_manager.initialize():
+                st.error("Firebase initialization failed. Please check your connection.")
+                return False
+                
+        db = firebase_manager.db
+        if not db:
+            st.error("Firestore client not available. Please check Firebase configuration.")
+            return False
+        
+        # Get the user's cards collection reference
+        st.write("### Firebase Connection Diagnostics")
+        st.write("Attempting to connect to Firebase...")
+        
+        try:
+            cards_ref = db.collection('users').document(st.session_state.uid).collection('cards')
+            all_cards = list(cards_ref.stream())
+            st.success(f"✅ Successfully connected to Firebase. Found {len(all_cards)} cards.")
+            
+            # Display document IDs
+            st.write("### Document ID Structure")
+            st.write("Here are the actual document IDs in your Firebase collection:")
+            for i, doc in enumerate(all_cards[:10]):  # Show first 10 for brevity
+                st.write(f"{i+1}. `{doc.id}`")
+                
+            # Show a sample document structure
+            if all_cards:
+                st.write("### Sample Document Structure")
+                sample_data = all_cards[0].to_dict()
+                sample_id = all_cards[0].id
+                st.write(f"Document ID: `{sample_id}`")
+                
+                # Create a cleaner display of the card data
+                st.json(sample_data)
+                
+                # Generate what the ID would be with our algorithm
+                if 'player_name' in sample_data and 'year' in sample_data and 'card_set' in sample_data:
+                    generated_id = f"{sample_data['player_name']}_{sample_data['year']}_{sample_data['card_set']}_{sample_data.get('card_number', '')}".replace(" ", "_").lower()
+                    st.write(f"Generated ID using our algorithm: `{generated_id}`")
+                    
+                    if generated_id != sample_id:
+                        st.warning("⚠️ The generated ID doesn't match the actual Firebase document ID.")
+                        st.write("This explains why card deletion might fail - we're looking for documents with IDs that don't match what's in Firebase.")
+                    else:
+                        st.success("✅ The generated ID matches the actual Firebase document ID.")
+                
+            return True
+            
+        except Exception as e:
+            st.error(f"Firebase query error: {str(e)}")
+            st.write("Check your Firebase security rules to ensure read access is permitted.")
+            return False
+            
+    except Exception as e:
+        st.error(f"Diagnostic failed: {str(e)}")
+        st.write(f"Error details: {traceback.format_exc()}")
+        return False
+
+def repair_firebase_collection():
+    """Utility to repair and synchronize Firebase collection with local collection"""
+    try:
+        # Get Firebase client
+        firebase_manager = FirebaseManager.get_instance()
+        if not firebase_manager._initialized:
+            if not firebase_manager.initialize():
+                st.error("Firebase initialization failed. Please check your connection.")
+                return False
+                
+        db = firebase_manager.db
+        if not db:
+            st.error("Firestore client not available. Please check Firebase configuration.")
+            return False
+            
+        st.write("### Firebase Collection Repair Utility")
+        st.write("This tool will help fix synchronization issues between your local collection and Firebase.")
+        
+        # Get all cards from Firebase
+        cards_ref = db.collection('users').document(st.session_state.uid).collection('cards')
+        firebase_cards = list(cards_ref.stream())
+        
+        # Get local collection
+        local_collection = st.session_state.collection
+        
+        # Compare counts
+        st.write(f"Found {len(firebase_cards)} cards in Firebase and {len(local_collection)} cards in your local collection.")
+        
+        # Create mappings and identify issues
+        firebase_ids = [doc.id for doc in firebase_cards]
+        firebase_data = {doc.id: doc.to_dict() for doc in firebase_cards}
+        
+        # Create a mapping of local cards to expected Firebase IDs
+        local_expected_ids = []
+        local_data = []
+        
+        for card in local_collection:
+            if hasattr(card, 'to_dict'):
+                card_dict = card.to_dict()
+            else:
+                card_dict = card.copy() if isinstance(card, dict) else {}
+                
+            # Generate expected ID
+            player_name = str(card_dict.get('player_name', ''))
+            year = str(card_dict.get('year', ''))
+            card_set = str(card_dict.get('card_set', ''))
+            card_number = str(card_dict.get('card_number', ''))
+            
+            expected_id = f"{player_name}_{year}_{card_set}_{card_number}".replace(" ", "_").lower()
+            local_expected_ids.append(expected_id)
+            local_data.append(card_dict)
+        
+        # Find cards in local collection but not in Firebase
+        local_only = []
+        for i, expected_id in enumerate(local_expected_ids):
+            if expected_id not in firebase_ids:
+                # Check if a similar card exists in Firebase
+                card_data = local_data[i]
+                player_name = str(card_data.get('player_name', '')).lower()
+                year = str(card_data.get('year', ''))
+                card_set = str(card_data.get('card_set', '')).lower()
+                card_number = str(card_data.get('card_number', ''))
+                
+                # Check if a similar card exists with a different ID
+                similar_found = False
+                similar_id = None
+                
+                for fb_id, fb_data in firebase_data.items():
+                    fb_player = str(fb_data.get('player_name', '')).lower()
+                    fb_year = str(fb_data.get('year', ''))
+                    fb_set = str(fb_data.get('card_set', '')).lower()
+                    fb_number = str(fb_data.get('card_number', ''))
+                    
+                    if (fb_player == player_name and 
+                        fb_year == year and 
+                        fb_set == card_set and 
+                        (not card_number or fb_number == card_number)):
+                        similar_found = True
+                        similar_id = fb_id
+                        break
+                
+                if similar_found:
+                    # Found in Firebase but with a different ID
+                    local_only.append({
+                        'card': card_data,
+                        'expected_id': expected_id,
+                        'similar_id': similar_id,
+                        'similar': True
+                    })
+                else:
+                    # Not found in Firebase at all
+                    local_only.append({
+                        'card': card_data,
+                        'expected_id': expected_id,
+                        'similar': False
+                    })
+        
+        # Find cards in Firebase but not in local collection
+        firebase_only = []
+        for fb_id, fb_data in firebase_data.items():
+            if fb_id not in local_expected_ids:
+                firebase_only.append({
+                    'id': fb_id,
+                    'data': fb_data
+                })
+        
+        # Show results
+        st.write("### Synchronization Issues")
+        
+        if not local_only and not firebase_only:
+            st.success("✅ Your collection is fully synchronized! No issues found.")
+            return True
+        
+        # Show local cards not in Firebase
+        if local_only:
+            st.warning(f"Found {len(local_only)} cards in your local collection that are not properly synchronized with Firebase:")
+            
+            for i, item in enumerate(local_only):
+                card = item['card']
+                display_name = f"{card.get('player_name', '')} {card.get('year', '')} {card.get('card_set', '')} #{card.get('card_number', '')}"
+                expected_id = item['expected_id']
+                
+                with st.expander(f"{i+1}. {display_name}"):
+                    if item['similar']:
+                        st.write(f"Found in Firebase but with a different ID: `{item['similar_id']}` instead of `{expected_id}`")
+                    else:
+                        st.write(f"Not found in Firebase. Expected ID: `{expected_id}`")
+                    st.json(card)
+        
+        # Show Firebase cards not in local collection
+        if firebase_only:
+            st.warning(f"Found {len(firebase_only)} cards in Firebase that are not in your local collection:")
+            
+            for i, item in enumerate(firebase_only):
+                fb_data = item['data']
+                fb_id = item['id']
+                display_name = f"{fb_data.get('player_name', '')} {fb_data.get('year', '')} {fb_data.get('card_set', '')} #{fb_data.get('card_number', '')}"
+                
+                with st.expander(f"{i+1}. {display_name} (ID: {fb_id})"):
+                    st.json(fb_data)
+        
+        # Repair options
+        st.write("### Repair Options")
+        
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            if local_only:
+                if st.button("Upload Missing Cards to Firebase", type="primary"):
+                    count = 0
+                    for item in local_only:
+                        try:
+                            card = item['card']
+                            doc_id = item['expected_id']
+                            cards_ref.document(doc_id).set(card)
+                            count += 1
+                        except Exception as e:
+                            st.error(f"Error uploading card: {str(e)}")
+                    
+                    st.success(f"Successfully uploaded {count} cards to Firebase")
+                    if count > 0:
+                        st.balloons()
+        
+        with col2:
+            if firebase_only:
+                if st.button("Download Missing Cards from Firebase", type="primary"):
+                    count = 0
+                    for item in firebase_only:
+                        try:
+                            fb_data = item['data']
+                            local_collection.append(fb_data)
+                            count += 1
+                        except Exception as e:
+                            st.error(f"Error adding card to local collection: {str(e)}")
+                    
+                    st.session_state.collection = local_collection
+                    st.success(f"Successfully added {count} cards to your local collection")
+                    if count > 0:
+                        st.balloons()
+        
+        # Complete resync option
+        if local_only or firebase_only:
+            st.write("### Complete Resynchronization")
+            resync_option = st.radio(
+                "Choose a complete resync direction:",
+                ["Firebase → Local (Overwrites local collection with Firebase data)",
+                 "Local → Firebase (Uploads entire local collection to Firebase, may create duplicates)"],
+                index=0
+            )
+            
+            if st.button("Perform Complete Resynchronization", type="secondary"):
+                if "Firebase → Local" in resync_option:
+                    # Overwrite local with Firebase
+                    new_collection = [doc.to_dict() for doc in firebase_cards]
+                    st.session_state.collection = new_collection
+                    st.success(f"Successfully replaced local collection with {len(new_collection)} cards from Firebase")
+                else:
+                    # Overwrite Firebase with local
+                    # First clear Firebase collection
+                    batch_size = 500  # Firestore limit
+                    deleted = 0
+                    
+                    # Get all documents
+                    docs = list(cards_ref.limit(batch_size).stream())
+                    
+                    # Delete in batches
+                    while docs:
+                        batch = db.batch()
+                        for doc in docs:
+                            batch.delete(doc.reference)
+                            deleted += 1
+                        batch.commit()
+                        
+                        # Get next batch
+                        docs = list(cards_ref.limit(batch_size).stream())
+                    
+                    # Upload local collection
+                    uploaded = 0
+                    for card in local_collection:
+                        try:
+                            if hasattr(card, 'to_dict'):
+                                card_dict = card.to_dict()
+                            else:
+                                card_dict = card.copy() if isinstance(card, dict) else {}
+                                
+                            # Generate ID
+                            player_name = str(card_dict.get('player_name', ''))
+                            year = str(card_dict.get('year', ''))
+                            card_set = str(card_dict.get('card_set', ''))
+                            card_number = str(card_dict.get('card_number', ''))
+                            
+                            doc_id = f"{player_name}_{year}_{card_set}_{card_number}".replace(" ", "_").lower()
+                            
+                            # Add to Firebase
+                            cards_ref.document(doc_id).set(card_dict)
+                            uploaded += 1
+                        except Exception as e:
+                            st.error(f"Error uploading card: {str(e)}")
+                    
+                    st.success(f"Successfully deleted {deleted} cards and uploaded {uploaded} cards to Firebase")
+                
+                st.balloons()
+        
+        return True
+            
+    except Exception as e:
+        st.error(f"Repair failed: {str(e)}")
+        st.write(f"Error details: {traceback.format_exc()}")
+        return False
 
 def main():
     # Initialize session state
     init_session_state()
+    
+    # Check for refresh flag
+    if hasattr(st.session_state, 'refresh_required') and st.session_state.refresh_required:
+        st.session_state.refresh_required = False
+        st.session_state.collection = load_collection_from_firebase()
+        st.rerun()
     
     # Initialize session state for user if not exists
     if 'user' not in st.session_state:
@@ -1239,8 +2177,16 @@ def main():
     if not has_cards(st.session_state.collection):
         st.session_state.collection = load_collection_from_firebase()
     
-    # Create tabs
-    tab1, tab2, tab3, tab4 = st.tabs(["Add Cards", "View Collection", "Share Collection", "Import/Export"])
+    # Define the tab titles
+    tab_titles = ["Add Cards", "View Collection", "Share Collection", "Import/Export"]
+    
+    # If a current tab is set, select that tab
+    current_tab_index = 0  # Default to first tab (Add Cards)
+    if hasattr(st.session_state, 'current_tab') and st.session_state.current_tab in tab_titles:
+        current_tab_index = tab_titles.index(st.session_state.current_tab)
+    
+    # Create the tabs
+    tabs = st.tabs(tab_titles)
     
     # If we're editing a card, show the edit form first
     if st.session_state.editing_card is not None and st.session_state.editing_data is not None:
@@ -1253,12 +2199,12 @@ def main():
         return  # Exit early to prevent showing other content
     
     # Tab 1: Add Cards
-    with tab1:
+    with tabs[0]:
         st.subheader("Add New Card")
         display_add_card_form()
     
     # Tab 2: View Collection
-    with tab2:
+    with tabs[1]:
         if has_cards(st.session_state.collection):
             # Search and filter section
             with st.container():
@@ -1301,13 +2247,22 @@ def main():
             # Display collection with view toggle
             st.subheader("Your Collection")
             
+            # Use the view mode from session state if available (for redirections)
+            default_view = "Grid View"
+            if hasattr(st.session_state, 'view_mode'):
+                default_view = st.session_state.view_mode
+            
             # Add view toggle
             view_mode = st.radio(
                 "View Mode",
                 ["Grid View", "Table View"],
+                index=0 if default_view == "Grid View" else 1,
                 horizontal=True,
                 label_visibility="collapsed"
             )
+            
+            # Save the view mode selection to session state
+            st.session_state.view_mode = view_mode
             
             if view_mode == "Grid View":
                 display_collection_grid(filtered_collection)
@@ -1318,7 +2273,7 @@ def main():
             st.info("Your collection is empty. Add some cards to get started!")
     
     # Tab 3: Share Collection
-    with tab3:
+    with tabs[2]:
         st.subheader("Share Your Collection")
         
         # Generate share link for the entire collection
@@ -1366,37 +2321,24 @@ def main():
                     if any(tag_filter.lower() in tag.lower() for tag in safe_get(card, 'tags', []))
                 ]
             
-            if isinstance(filtered_collection, pd.DataFrame):
-                if not filtered_collection.empty:
-                    filtered_share_link = generate_share_link(filtered_collection)
-                    st.markdown(f"""
-                    <div class="share-section">
-                        <p>Share your filtered collection ({len(filtered_collection)} cards):</p>
-                        <a href="?{filtered_share_link}" class="share-button" target="_blank">
-                            📤 Share Filtered Collection
-                        </a>
-                    </div>
-                    """, unsafe_allow_html=True)
-                else:
-                    st.info("No cards match your filters.")
+            # Use has_cards to check if filtered collection has cards
+            if has_cards(filtered_collection):
+                filtered_share_link = generate_share_link(filtered_collection)
+                st.markdown(f"""
+                <div class="share-section">
+                    <p>Share your filtered collection ({len(filtered_collection)} cards):</p>
+                    <a href="?{filtered_share_link}" class="share-button" target="_blank">
+                        📤 Share Filtered Collection
+                    </a>
+                </div>
+                """, unsafe_allow_html=True)
             else:
-                if filtered_collection:  # For list type collections
-                    filtered_share_link = generate_share_link(filtered_collection)
-                    st.markdown(f"""
-                    <div class="share-section">
-                        <p>Share your filtered collection ({len(filtered_collection)} cards):</p>
-                        <a href="?{filtered_share_link}" class="share-button" target="_blank">
-                            📤 Share Filtered Collection
-                        </a>
-                    </div>
-                    """, unsafe_allow_html=True)
-                else:
-                    st.info("No cards match your filters.")
+                st.info("No cards match your filters.")
         else:
             st.info("Add some cards to your collection to generate a share link.")
     
     # Tab 4: Import/Export
-    with tab4:
+    with tabs[3]:
         col1, col2 = st.columns(2)
         
         with col1:
@@ -1410,44 +2352,173 @@ def main():
                     help="Choose the format for your exported collection"
                 )
                 
-                # Convert collection to DataFrame for export
-                df = pd.DataFrame([
-                    card.to_dict() if hasattr(card, 'to_dict') else card 
-                    for card in st.session_state.collection
-                ])
+                # Status container for export messages
+                export_status = st.empty()
                 
-                # Handle different export formats
-                if export_format == "Excel":
-                    excel_data = export_collection()
-                    if excel_data:
-                        st.download_button(
-                            label="Download Excel",
-                            data=excel_data,
-                            file_name=f"card_collection_{datetime.now().strftime('%Y%m%d')}.xlsx",
-                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                            use_container_width=True
-                        )
-                elif export_format == "CSV":
-                    csv_data = df.to_csv(index=False)
-                    st.download_button(
-                        label="Download CSV",
-                        data=csv_data,
-                        file_name=f"card_collection_{datetime.now().strftime('%Y%m%d')}.csv",
-                        mime="text/csv",
-                        use_container_width=True
-                    )
-                else:  # JSON
-                    json_data = df.to_json(orient='records', date_format='iso')
-                    st.download_button(
-                        label="Download JSON",
-                        data=json_data,
-                        file_name=f"card_collection_{datetime.now().strftime('%Y%m%d')}.json",
-                        mime="application/json",
-                        use_container_width=True
-                    )
+                try:
+                    # Safely convert collection to DataFrame for export
+                    if isinstance(st.session_state.collection, pd.DataFrame):
+                        if st.session_state.collection.empty:
+                            export_status.warning("Collection DataFrame is empty.")
+                            return
+                        df = st.session_state.collection.copy()
+                    else:
+                        # Check if it's a list and not empty
+                        if not isinstance(st.session_state.collection, list) or len(st.session_state.collection) == 0:
+                            export_status.warning("No cards to export.")
+                            return
+                        
+                        # Safely create DataFrame with error handling
+                        try:
+                            collection_dicts = []
+                            for card in st.session_state.collection:
+                                if hasattr(card, 'to_dict') and callable(getattr(card, 'to_dict')):
+                                    collection_dicts.append(card.to_dict())
+                                elif isinstance(card, dict):
+                                    collection_dicts.append(card)
+                                else:
+                                    st.warning(f"Skipped card of type {type(card)} that cannot be converted to dictionary")
+                            
+                            if not collection_dicts:
+                                export_status.error("No valid cards to export after conversion")
+                                return
+                            
+                            df = pd.DataFrame(collection_dicts)
+                            if df.empty:  # Use .empty instead of direct boolean evaluation
+                                export_status.error("Resulting DataFrame is empty")
+                                return
+                        except Exception as df_err:
+                            export_status.error(f"Error preparing collection data: {str(df_err)}")
+                            st.write("Debug info:", traceback.format_exc())
+                            # Skip the rest of the export process
+                            return
+                    
+                    # Handle different export formats with error handling for each
+                    if export_format == "Excel":
+                        with st.spinner("Preparing Excel export..."):
+                            try:
+                                excel_data = export_collection()
+                                if excel_data:
+                                    st.download_button(
+                                        label="Download Excel",
+                                        data=excel_data,
+                                        file_name=f"card_collection_{datetime.now().strftime('%Y%m%d')}.xlsx",
+                                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                                        use_container_width=True
+                                    )
+                                    export_status.success(f"Excel export ready with {len(df)} cards")
+                                else:
+                                    export_status.error("Excel export failed. Try another format.")
+                                    
+                                    # Offer CSV as fallback
+                                    st.info("You can try CSV format as an alternative")
+                            except Exception as excel_err:
+                                export_status.error(f"Excel export error: {str(excel_err)}")
+                                st.write("Debug traceback:", traceback.format_exc())
+                                st.info("Please try CSV format as an alternative")
+                    elif export_format == "CSV":
+                        with st.spinner("Preparing CSV export..."):
+                            try:
+                                # Handle date columns for CSV export
+                                export_df = df.copy()
+                                
+                                # Process each column to ensure CSV compatibility
+                                for col in export_df.columns:
+                                    # Convert date objects to strings for CSV export
+                                    if export_df[col].dtype == 'object':
+                                        export_df[col] = export_df[col].apply(
+                                            lambda x: x.isoformat() if isinstance(x, (datetime, date)) else x
+                                        )
+                                
+                                # Safe CSV conversion
+                                csv_data = export_df.to_csv(index=False)
+                                st.download_button(
+                                    label="Download CSV",
+                                    data=csv_data,
+                                    file_name=f"card_collection_{datetime.now().strftime('%Y%m%d')}.csv",
+                                    mime="text/csv",
+                                    use_container_width=True
+                                )
+                                export_status.success(f"CSV export ready with {len(df)} cards")
+                            except Exception as csv_err:
+                                export_status.error(f"CSV export error: {str(csv_err)}")
+                                st.write("Debug traceback:", traceback.format_exc())
+                                st.warning("Try JSON format instead")
+                    else:  # JSON
+                        with st.spinner("Preparing JSON export..."):
+                            try:
+                                # Convert the DataFrame to a list of dictionaries first
+                                records = df.to_dict(orient='records')
+                                
+                                # Process each record to ensure JSON compatibility
+                                for record in records:
+                                    for key, value in record.items():
+                                        if isinstance(value, (datetime, date)):
+                                            record[key] = value.isoformat()
+                                        elif pd.isna(value):
+                                            record[key] = None
+                                        elif not isinstance(value, (str, int, float, bool, list, dict, type(None))):
+                                            record[key] = str(value)
+                                
+                                # Use the built-in json module for better control
+                                json_data = json.dumps(records, default=str)
+                                st.download_button(
+                                    label="Download JSON",
+                                    data=json_data,
+                                    file_name=f"card_collection_{datetime.now().strftime('%Y%m%d')}.json",
+                                    mime="application/json",
+                                    use_container_width=True
+                                )
+                                export_status.success(f"JSON export ready with {len(records)} cards")
+                            except Exception as json_err:
+                                export_status.error(f"JSON export error: {str(json_err)}")
+                                st.write("Debug traceback:", traceback.format_exc())
+                                
+                                # Try a more robust approach for JSON
+                                try:
+                                    # Convert to simpler dictionaries first
+                                    simple_list = []
+                                    for card in st.session_state.collection:
+                                        if hasattr(card, 'to_dict'):
+                                            card_dict = card.to_dict()
+                                        else:
+                                            card_dict = card if isinstance(card, dict) else {}
+                                        
+                                        # Ensure all values are JSON serializable
+                                        for k, v in list(card_dict.items()):
+                                            if isinstance(v, (datetime, date)):
+                                                card_dict[k] = v.isoformat()
+                                            elif not isinstance(v, (str, int, float, bool, list, dict, type(None))):
+                                                card_dict[k] = str(v)
+                                        
+                                        simple_list.append(card_dict)
+                                    
+                                    safe_json = json.dumps(simple_list)
+                                    st.download_button(
+                                        label="Download JSON (Simple Format)",
+                                        data=safe_json,
+                                        file_name=f"card_collection_simple_{datetime.now().strftime('%Y%m%d')}.json",
+                                        mime="application/json",
+                                        use_container_width=True
+                                    )
+                                    export_status.success(f"Simple JSON export ready with {len(simple_list)} cards")
+                                except Exception as simple_json_err:
+                                    export_status.error(f"All JSON export attempts failed: {str(simple_json_err)}")
+                                    st.write("Debug traceback:", traceback.format_exc())
+                except Exception as e:
+                    export_status.error(f"Export error: {str(e)}")
+                    st.write("Debug info:", traceback.format_exc())
             else:
                 st.info("Add some cards to your collection to enable export.")
-        
+                
+                # Provide a sample template even if collection is empty
+                st.download_button(
+                    label="Download Empty Template",
+                    data=generate_sample_template(),
+                    file_name="empty_collection_template.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                )
+                
         with col2:
             st.subheader("Import Collection")
             
@@ -1461,9 +2532,9 @@ def main():
             
             # File uploader with format-specific accept parameter
             accept = {
-                "Excel": ".xlsx",
-                "CSV": ".csv",
-                "JSON": ".json"
+                "Excel": "xlsx",
+                "CSV": "csv",
+                "JSON": "json"
             }[import_format]
             
             uploaded_file = st.file_uploader(
@@ -1481,7 +2552,13 @@ def main():
                     # Read file based on format
                     status_text.text("Reading file...")
                     if import_format == "Excel":
-                        imported_df = pd.read_excel(uploaded_file)
+                        try:
+                            imported_df = pd.read_excel(uploaded_file)
+                            st.write(f"Debug: Successfully read Excel file with shape: {imported_df.shape}")
+                        except Exception as excel_err:
+                            st.error(f"Error reading Excel file: {str(excel_err)}")
+                            st.info("Make sure the file is a valid Excel file (.xlsx format)")
+                            return
                     elif import_format == "CSV":
                         imported_df = pd.read_csv(uploaded_file)
                     else:  # JSON
@@ -1518,7 +2595,41 @@ def main():
                     status_text.text("Processing data...")
                     
                     # Convert DataFrame to list of dictionaries
-                    imported_collection = imported_df.to_dict('records')
+                    imported_df = imported_df.copy()
+                    
+                    # Ensure all data is properly processed
+                    for col in imported_df.columns:
+                        # Convert all values to strings for consistency (except numeric columns)
+                        if col not in ['purchase_price', 'current_value']:
+                            imported_df[col] = imported_df[col].astype(str)
+                            # Clean up missing values
+                            imported_df[col] = imported_df[col].replace('nan', '').replace('None', '')
+                            imported_df[col] = imported_df[col].replace('NaN', '').replace('NaT', '')
+                    
+                    # Handle numeric columns
+                    for num_col in ['purchase_price', 'current_value']:
+                        if num_col in imported_df.columns:
+                            # Convert to float, handling errors
+                            imported_df[num_col] = pd.to_numeric(imported_df[num_col], errors='coerce').fillna(0.0)
+                    
+                    # Add created_at column if it doesn't exist
+                    if 'created_at' not in imported_df.columns:
+                        current_date_str = datetime.now().strftime('%Y-%m-%d')
+                        imported_df['created_at'] = current_date_str
+                    else:
+                        # Ensure created_at is properly formatted
+                        for i, value in enumerate(imported_df['created_at']):
+                            if pd.isna(value) or not value:
+                                imported_df.at[i, 'created_at'] = datetime.now().strftime('%Y-%m-%d')
+                    
+                    # Properly convert to records with explicit handling
+                    try:
+                        imported_collection = imported_df.to_dict('records')
+                        print(f"Successfully converted DataFrame to {len(imported_collection)} records")
+                    except Exception as conv_err:
+                        st.error(f"Error converting DataFrame to records: {str(conv_err)}")
+                        st.write(f"Debug traceback: {traceback.format_exc()}")
+                        return
                     
                     # Get existing collection
                     existing_collection = st.session_state.collection
@@ -1531,80 +2642,161 @@ def main():
                         try:
                             # Get card attributes, handling both Card objects and dictionaries
                             if hasattr(card, 'player_name'):
-                                card_name = card.player_name
-                                card_year = card.year
-                                card_set = card.card_set
-                                card_number = card.card_number
+                                card_name = str(card.player_name) if card.player_name is not None else ''
+                                card_year = str(card.year) if card.year is not None else ''
+                                card_set = str(card.card_set) if card.card_set is not None else ''
+                                card_number = str(card.card_number) if card.card_number is not None else ''
                             else:
-                                card_name = card.get('player_name')
-                                card_year = card.get('year')
-                                card_set = card.get('card_set')
-                                card_number = card.get('card_number')
+                                card_name = str(card.get('player_name', '')) if card.get('player_name') is not None else ''
+                                card_year = str(card.get('year', '')) if card.get('year') is not None else ''
+                                card_set = str(card.get('card_set', '')) if card.get('card_set') is not None else ''
+                                card_number = str(card.get('card_number', '')) if card.get('card_number') is not None else ''
+                            
+                            # Handle pandas Series objects - convert to scalar if needed
+                            if hasattr(card_name, 'iloc') and len(card_name) > 0:
+                                card_name = str(card_name.iloc[0])
+                            if hasattr(card_year, 'iloc') and len(card_year) > 0:
+                                card_year = str(card_year.iloc[0])
+                            if hasattr(card_set, 'iloc') and len(card_set) > 0:
+                                card_set = str(card_set.iloc[0])
+                            if hasattr(card_number, 'iloc') and len(card_number) > 0:
+                                card_number = str(card_number.iloc[0])
+                                
+                            # Check if any value is a pandas Series/array and handle accordingly
+                            if any(isinstance(val, (pd.Series, np.ndarray)) for val in [card_name, card_year, card_set, card_number]):
+                                print(f"Warning: card data contains Series/array objects that may cause comparison issues")
+                                # Attempt to convert all to scalar strings
+                                card_name = str(card_name)
+                                card_year = str(card_year)
+                                card_set = str(card_set)
+                                card_number = str(card_number)
                             
                             # Check against existing cards
                             for existing_card in collection:
                                 if hasattr(existing_card, 'player_name'):
-                                    existing_name = existing_card.player_name
-                                    existing_year = existing_card.year
-                                    existing_set = existing_card.card_set
-                                    existing_number = existing_card.card_number
+                                    existing_name = str(existing_card.player_name) if existing_card.player_name is not None else ''
+                                    existing_year = str(existing_card.year) if existing_card.year is not None else ''
+                                    existing_set = str(existing_card.card_set) if existing_card.card_set is not None else ''
+                                    existing_number = str(existing_card.card_number) if existing_card.card_number is not None else ''
                                 else:
-                                    existing_name = existing_card.get('player_name')
-                                    existing_year = existing_card.get('year')
-                                    existing_set = existing_card.get('card_set')
-                                    existing_number = existing_card.get('card_number')
+                                    existing_name = str(existing_card.get('player_name', '')) if existing_card.get('player_name') is not None else ''
+                                    existing_year = str(existing_card.get('year', '')) if existing_card.get('year') is not None else ''
+                                    existing_set = str(existing_card.get('card_set', '')) if existing_card.get('card_set') is not None else ''
+                                    existing_number = str(existing_card.get('card_number', '')) if existing_card.get('card_number') is not None else ''
                                 
-                                if (card_name == existing_name and 
-                                    card_year == existing_year and 
-                                    card_set == existing_set and 
-                                    card_number == existing_number):
+                                # Convert Series/array objects to strings if needed
+                                if hasattr(existing_name, 'iloc') and len(existing_name) > 0:
+                                    existing_name = str(existing_name.iloc[0])
+                                if hasattr(existing_year, 'iloc') and len(existing_year) > 0:
+                                    existing_year = str(existing_year.iloc[0])
+                                if hasattr(existing_set, 'iloc') and len(existing_set) > 0:
+                                    existing_set = str(existing_set.iloc[0])
+                                if hasattr(existing_number, 'iloc') and len(existing_number) > 0:
+                                    existing_number = str(existing_number.iloc[0])
+                                
+                                # Perform string comparison for safety
+                                if (card_name.lower() == existing_name.lower() and 
+                                    card_year.lower() == existing_year.lower() and 
+                                    card_set.lower() == existing_set.lower() and 
+                                    card_number.lower() == existing_number.lower()):
                                     return True
                             return False
                         except Exception as e:
                             print(f"Error checking if card exists: {str(e)}")
                             print(f"Card data: {card}")
+                            print(f"Error traceback: {traceback.format_exc()}")
                             return False
                     
                     progress_bar.progress(60)
                     status_text.text("Checking for duplicates...")
                     
                     # Filter out duplicates
-                    new_cards = [card for card in imported_collection 
-                               if not card_exists(card, existing_collection)]
-                    
-                    if len(new_cards) < len(imported_collection):
-                        st.warning(f"Skipped {len(imported_collection) - len(new_cards)} duplicate cards.")
+                    try:
+                        new_cards = []
+                        duplicate_count = 0
+                        
+                        # Process cards in smaller batches with updates
+                        total_cards = len(imported_collection)
+                        batch_size = max(1, min(20, total_cards // 5))  # Adaptive batch size
+                        
+                        for i, card in enumerate(imported_collection):
+                            # Update progress periodically
+                            if i % batch_size == 0:
+                                progress_percent = 60 + (i / total_cards * 20)
+                                progress_bar.progress(int(progress_percent))
+                                status_text.text(f"Checking for duplicates... ({i}/{total_cards})")
+                            
+                            if not card_exists(card, existing_collection):
+                                new_cards.append(card)
+                            else:
+                                duplicate_count += 1
+                        
+                        if duplicate_count > 0:
+                            st.warning(f"Skipped {duplicate_count} duplicate cards.")
+                            
+                        if not new_cards:
+                            st.info("No new cards to import. All cards already exist in your collection.")
+                            progress_bar.progress(100)
+                            status_text.text("No new cards to import.")
+                            return
+                    except Exception as dup_err:
+                        st.error(f"Error checking for duplicates: {str(dup_err)}")
+                        st.write(f"Debug traceback: {traceback.format_exc()}")
+                        return
                     
                     progress_bar.progress(80)
-                    status_text.text("Saving to database...")
+                    status_text.text(f"Saving {len(new_cards)} cards to database...")
                     
                     # Append only new cards to existing collection
                     updated_collection = existing_collection + new_cards
                     
-                    # Save to Firebase
-                    if save_collection_to_firebase():
+                    # Update session state
+                    st.session_state.collection = updated_collection
+                    
+                    # Save to Firebase with better error handling
+                    try:
+                        status_text.text(f"Saving {len(new_cards)} cards to Firebase...")
+                        # Attempt to save to Firebase
+                        save_success = save_collection_to_firebase()
+                        
+                        if save_success:
+                            progress_bar.progress(100)
+                            status_text.text("Import complete!")
+                            st.success(f"Successfully imported {len(new_cards)} new cards!")
+                            
+                            # Redirect to View Collection tab with Grid View after successful import
+                            st.session_state.current_tab = "View Collection"
+                            st.session_state.view_mode = "Grid View"
+                            st.rerun()
+                        else:
+                            progress_bar.progress(100)
+                            status_text.text("Import partially complete")
+                            st.error("Failed to save imported collection to Firebase, but cards were added to your local collection.")
+                            st.info("Try refreshing the page or reopening the app to sync with Firebase.")
+                    except Exception as firebase_err:
                         progress_bar.progress(100)
-                        status_text.text("Import complete!")
-                        st.success(f"Successfully imported {len(new_cards)} new cards!")
-                        st.balloons()
-                        # Force refresh the collection from Firebase
-                        st.session_state.collection = load_collection_from_firebase()
-                        st.rerun()  # Force a rerun to update the UI
-                    else:
-                        st.error("Failed to save imported collection to database. Please try again.")
-                
+                        status_text.text("Import partially complete")
+                        st.error(f"Error saving to Firebase: {str(firebase_err)}")
+                        st.write(f"Debug traceback: {traceback.format_exc()}")
+                        st.info("Your cards were added locally but may not be saved to Firebase. Please check your collection.")
+                    
                 except Exception as e:
                     st.error(f"Error importing file: {str(e)}")
                     st.write("Debug: Error traceback:", traceback.format_exc())
-        
-        # Add download template button
-        st.download_button(
-            label="Download Collection Template",
-            data=generate_sample_template(),
-            file_name="collection_template.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            help="Download a template to help format your collection data for upload"
-        )
+            
+            # Add download template button
+            st.download_button(
+                label="Download Collection Template",
+                data=generate_sample_template(),
+                file_name="collection_template.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                help="Download a template to help format your collection data for upload"
+            )
+    
+    # Set the active tab based on session state (this is just for selecting the correct tab visually)
+    # It's important to understand that this doesn't affect which tab's content is shown
+    if hasattr(st.session_state, 'current_tab') and st.session_state.current_tab in tab_titles:
+        st.session_state.active_tab = current_tab_index
 
 if __name__ == "__main__":
     main()
