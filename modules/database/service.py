@@ -9,6 +9,7 @@ import ast
 import io
 from PIL import Image
 import logging
+import streamlit as st
 
 logger = logging.getLogger(__name__)
 
@@ -93,13 +94,14 @@ class DatabaseService:
 
     @staticmethod
     def get_user_collection(uid: str) -> List[Card]:
-        """Get all cards from the user's collection."""
+        """Load user's card collection from Firestore."""
         try:
+            # Get the Firebase database instance
             service = DatabaseService.get_instance()
             if not service._ensure_db_connection():
-                logger.error("Database connection not available")
+                st.error("Database connection not available")
                 return []
-
+                
             # Get the user's cards subcollection reference
             cards_ref = service.db.collection('users').document(uid).collection('cards')
             
@@ -114,14 +116,13 @@ class DatabaseService:
                     card = Card.from_dict(card_data)
                     cards.append(card)
                 except Exception as e:
-                    logger.error(f"Error converting card data to Card object: {str(e)}")
+                    logger.error(f"Error converting card data: {str(e)}")
                     continue
             
-            logger.info(f"Successfully retrieved {len(cards)} cards from collection")
             return cards
             
         except Exception as e:
-            logger.error(f"Error in get_user_collection: {str(e)}")
+            logger.error(f"Error loading collection: {str(e)}")
             return []
 
     @staticmethod
@@ -500,6 +501,8 @@ class DatabaseService:
     def load_user_collection(uid: str) -> List[Card]:
         """Load user's card collection from Firestore."""
         try:
+            logger.info(f"Loading user collection for UID: {uid}")
+            
             # Get the user's cards subcollection reference
             cards_ref = db.collection('users').document(uid).collection('cards')
             
@@ -508,34 +511,45 @@ class DatabaseService:
             
             # Convert documents to Card objects
             cards = []
+            successful_cards = 0
+            failed_cards = 0
+            
             for doc in card_docs:
                 try:
                     card_data = doc.to_dict()
                     card = Card.from_dict(card_data)
                     cards.append(card)
+                    successful_cards += 1
                 except Exception as e:
-                    print(f"Error converting card data to Card object: {str(e)}")
-                    print(f"Card data: {card_data}")
+                    logger.error(f"Error converting card data to Card object: {str(e)}")
+                    logger.debug(f"Card data: {card_data}")
+                    failed_cards += 1
                     continue
             
-            print(f"Successfully loaded {len(cards)} cards from collection")
+            logger.info(f"Successfully loaded {successful_cards} cards from collection")
+            if failed_cards > 0:
+                logger.warning(f"Failed to load {failed_cards} cards due to conversion errors")
+            
             return cards
             
         except Exception as e:
-            print(f"Error in load_user_collection: {str(e)}")
+            logger.error(f"Error in load_user_collection: {str(e)}")
             import traceback
-            print(f"Traceback: {traceback.format_exc()}")
+            logger.debug(f"Traceback: {traceback.format_exc()}")
             return []
 
     @staticmethod
     def remove_card_from_collection(uid: str, card: Card) -> bool:
         """Remove a card from the user's collection."""
         try:
+            logger.info(f"Removing card from collection for UID: {uid}")
+            
             # Get the user's cards subcollection reference
             cards_ref = db.collection('users').document(uid).collection('cards')
             
             # Generate the card ID
             card_id = f"{card.player_name}_{card.year}_{card.card_set}_{card.card_number}".replace(" ", "_").lower()
+            logger.info(f"Generated card ID for removal: {card_id}")
             
             # Delete the card document
             cards_ref.document(card_id).delete()
@@ -544,11 +558,11 @@ class DatabaseService:
             user_ref = db.collection('users').document(uid)
             user_ref.update({'last_updated': datetime.now().isoformat()})
             
-            print(f"Successfully removed card from collection: {card_id}")
+            logger.info(f"Successfully removed card from collection: {card_id}")
             return True
             
         except Exception as e:
-            print(f"Error in remove_card_from_collection: {str(e)}")
+            logger.error(f"Error in remove_card_from_collection: {str(e)}")
             import traceback
-            print(f"Traceback: {traceback.format_exc()}")
+            logger.debug(f"Traceback: {traceback.format_exc()}")
             return False 

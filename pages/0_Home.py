@@ -4,7 +4,6 @@ from modules.core.firebase_manager import FirebaseManager
 from modules.ui.branding import BrandingComponent
 from modules.database.service import DatabaseService
 from datetime import datetime, timedelta
-import traceback
 
 st.set_page_config(page_title="Home", layout="wide")
 track_page_view("Home")
@@ -45,8 +44,7 @@ try:
                     card_dict = {k: getattr(card, k) for k in dir(card) 
                                 if not k.startswith('_') and not callable(getattr(card, k))}
                     collection.append(card_dict)
-                except Exception as e:
-                    print(f"Could not convert card to dictionary: {str(e)}")
+                except Exception:
                     continue
     
     # Calculate total cards and market value
@@ -118,9 +116,7 @@ try:
                 card_copy['_parsed_created_date'] = created_date
                 recent_cards.append(card_copy)
                 
-        except Exception as e:
-            print(f"Error processing card: {e}")
-            print(traceback.format_exc())
+        except Exception:
             continue
     
     # Sort recent cards by created_at (newest first)
@@ -176,7 +172,7 @@ try:
                 # Show card image if available
                 with col1:
                     if 'photo' in card and card['photo']:
-                        st.image(card['photo'], use_column_width=True)
+                        st.image(card['photo'], use_container_width=True)
                     else:
                         st.markdown("*No image available*")
                 
@@ -225,12 +221,10 @@ try:
                                 st.markdown(f"**Added on:** {created_at_str}")
                         else:
                             st.markdown("**Added on:** Unknown")
-                    except Exception as e:
+                    except Exception:
                         st.markdown("**Added on:** Unable to determine")
     else:
         st.info("No cards have been added in the last 7 days. Use the Collection Manager to add cards to your collection.")
 except Exception as e:
     st.error(f"Error loading dashboard: {str(e)}")
-    st.write("Please try refreshing the page or contacting support if the issue persists.")
-    print(f"Dashboard error: {str(e)}")
-    print(traceback.format_exc()) 
+    st.warning("Please try refreshing the page or contact support if the issue persists.") 

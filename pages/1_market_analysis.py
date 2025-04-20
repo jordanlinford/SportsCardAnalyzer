@@ -518,7 +518,7 @@ def display_market_analysis(card_data, market_data):
     
     # First row - Price Statistics
     st.markdown("#### Price Statistics")
-    price_col1, price_col2, price_col3 = st.columns(3)
+    price_col1, price_col2, price_col3, price_col4 = st.columns(4)
     with price_col1:
         st.metric(
             "Average Sale Price",
@@ -537,26 +537,19 @@ def display_market_analysis(card_data, market_data):
             f"${clean_prices.min():.2f}",
             help="The lowest price this card has sold for (outliers removed)"
         )
+    with price_col4:
+        last_sale_price = df['price'].iloc[-1]
+        st.metric(
+            "Last Sale Price",
+            f"${last_sale_price:.2f}",
+            help="The most recent sale price for this card"
+        )
     
     # Second row - Market Scores
     st.markdown("#### Market Scores")
-    col1, col2, col3, col4 = st.columns(4)
-    with col1:
-        st.markdown(f"""
-        <div style='text-align: center;'>
-            <h3 style='color: {get_score_color(market_health_score)};'>{market_health_score:.1f}/10</h3>
-            <p>Market Health Score</p>
-        </div>
-        """, unsafe_allow_html=True)
-        st.markdown("""
-        <div style='font-size: 0.8em;'>
-            <p style='color: #4CAF50;'>7-10: Strong market activity</p>
-            <p style='color: #FFC107;'>5-7: Average market activity</p>
-            <p style='color: #F44336;'>Below 5: Weak market interest</p>
-        </div>
-        """, unsafe_allow_html=True)
+    col1, col2, col3 = st.columns(3)
     
-    with col2:
+    with col1:
         st.markdown(f"""
         <div style='text-align: center;'>
             <h3 style='color: {get_score_color(trend_score)};'>{trend_score:.1f}/10</h3>
@@ -571,7 +564,7 @@ def display_market_analysis(card_data, market_data):
         </div>
         """, unsafe_allow_html=True)
     
-    with col3:
+    with col2:
         st.markdown(f"""
         <div style='text-align: center;'>
             <h3 style='color: {get_score_color(volatility_score)};'>{volatility_score:.1f}/10</h3>
@@ -586,7 +579,7 @@ def display_market_analysis(card_data, market_data):
         </div>
         """, unsafe_allow_html=True)
     
-    with col4:
+    with col3:
         st.markdown(f"""
         <div style='text-align: center;'>
             <h3 style='color: {get_score_color(market_health_score)};'>{market_health_score:.1f}/10</h3>
@@ -1306,19 +1299,6 @@ def main():
     
     # Initialize session state
     init_session_state()
-    
-    # Add billing section
-    with ThemeManager.styled_card():
-        st.subheader("Billing")
-        st.info("💳 Billing management coming soon!")
-
-        # Placeholder for future billing features
-        st.markdown('''
-        **Coming Soon:**
-        - Subscription management
-        - Payment history
-        - Billing preferences
-        ''')
     
     # Initialize analyzers
     scraper = EbayInterface()

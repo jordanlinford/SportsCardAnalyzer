@@ -6,7 +6,7 @@ from modules.database.service import DatabaseService
 from datetime import datetime
 import traceback
 import base64
-from typing import List, Optional
+from typing import List, Optional, Union, Dict, Any
 import requests
 import io
 from PIL import Image
@@ -14,6 +14,17 @@ from ..database.models import Card
 
 def display_collection_grid(filtered_collection, is_shared=False):
     """Display collection in a responsive grid layout"""
+    # Debug information
+    st.write("### Grid Display Debug")
+    st.write(f"Collection type: {type(filtered_collection)}")
+    if isinstance(filtered_collection, pd.DataFrame):
+        st.write(f"DataFrame shape: {filtered_collection.shape}")
+        st.write(f"DataFrame columns: {filtered_collection.columns.tolist()}")
+    elif isinstance(filtered_collection, list):
+        st.write(f"List length: {len(filtered_collection)}")
+        if filtered_collection:
+            st.write("First item type:", type(filtered_collection[0]))
+    
     if not has_cards(filtered_collection):
         st.info("No cards to display")
         return
@@ -159,7 +170,7 @@ class CardDisplay:
             st.image("https://placehold.co/300x400/e6e6e6/666666.png?text=Image+Error", use_container_width=use_container_width)
 
     @staticmethod
-    def display_grid(cards: List[Card], on_click=None):
+    def display_grid(cards: Union[List[Union[Card, Dict[str, Any]]], pd.DataFrame], on_click=None):
         """Display cards in a grid layout."""
         if cards is None or (hasattr(cards, 'empty') and cards.empty):
             st.warning("No cards to display.")
@@ -237,100 +248,75 @@ class CardDisplay:
         cols = st.columns(num_columns)
         
         # Convert DataFrame to list of dictionaries if needed
-        if hasattr(cards, 'to_dict'):
+        if isinstance(cards, pd.DataFrame):
             cards = cards.to_dict('records')
         
-        # Display each card in the grid
-        for i, card in enumerate(cards):
-            col = cols[i % num_columns]
+        # Display cards in grid
+        for idx, card in enumerate(cards):
+            col = cols[idx % num_columns]
             with col:
-                st.markdown('<div class="card-grid-item">', unsafe_allow_html=True)
-                
-                # Display card image using the proper display_image method
-                if isinstance(card, dict):
-                    image_url = card.get('photo', '')
-                else:
-                    image_url = getattr(card, 'photo', '')
-                
-                # Use the CardDisplay.display_image method for consistent image handling
-                CardDisplay.display_image(image_url, use_container_width=True)
-                
-                # Display card details
-                st.markdown('<div class="card-grid-content">', unsafe_allow_html=True)
-                
-                # Get card details
-                if isinstance(card, dict):
-                    player_name = card.get('player_name', '')
-                    year = card.get('year', '')
-                    card_set = card.get('card_set', '')
-                    card_number = card.get('card_number', '')
-                    condition = card.get('condition', '')
-                    current_value = card.get('current_value', 0)
-                else:
-                    player_name = getattr(card, 'player_name', '')
-                    year = getattr(card, 'year', '')
-                    card_set = getattr(card, 'card_set', '')
-                    card_number = getattr(card, 'card_number', '')
-                    condition = getattr(card, 'condition', '')
-                    current_value = getattr(card, 'current_value', 0)
-                
-                # Display player name
-                st.markdown(f'<h3>{player_name}</h3>', unsafe_allow_html=True)
-                
-                # Display card details
-                st.markdown(f'<p>{year} {card_set} #{card_number}</p>', unsafe_allow_html=True)
-                
-                # Display condition and value
-                st.markdown(f'<p>Condition: {condition}</p>', unsafe_allow_html=True)
-                
-                # Safely format the value
-                try:
-                    value = float(current_value) if current_value else 0
-                    st.markdown(f'<p class="value">Value: ${value:,.2f}</p>', unsafe_allow_html=True)
-                except (ValueError, TypeError):
-                    st.markdown(f'<p class="value">Value: ${current_value}</p>', unsafe_allow_html=True)
-                
-                # Add edit button if on_click is provided
-                if on_click is not None:
-                    if st.button("Edit", key=f"edit_{i}", use_container_width=True):
-                        on_click(i)
-                
-                st.markdown('</div>', unsafe_allow_html=True)  # Close card-grid-content
-                st.markdown('</div>', unsafe_allow_html=True)  # Close card-grid-item
+                with st.container():
+                    # Get card data
+                    if isinstance(card, dict):
+                        card_data = card
+                    else:
+                        card_data = card.to_dict() if hasattr(card, 'to_dict') else card.__dict__
+                    
+                    # Display image
+                    photo = card_data.get('photo', '')
+                    CardDisplay.display_image(photo)
+                    
+                    # Display card details
+                    st.markdown(f"""
+                    <div class="card-grid-content">
+                        <h3>{card_data.get('player_name', 'Unknown')}</h3>
+                        <p>{card_data.get('year', '')} {card_data.get('card_set', '')}</p>
+                        <p>#{card_data.get('card_number', '')}</p>
+                        <p class="value">${float(card_data.get('current_value', 0)):.2f}</p>
+                    </div>
+                    """, unsafe_allow_html=True)
+                    
+                    # Add click handler if provided
+                    if on_click:
+                        if st.button("Edit", key=f"edit_{idx}"):
+                            on_click(idx)
 
     @staticmethod
-    def display_table(cards: List[Card], on_click=None):
-        """Display cards in a table layout."""
-        if not cards:
+    def display_table(cards: Union[List[Union[Card, Dict[str, Any]]], pd.DataFrame], on_click=None):
+        """Display cards in a table format."""
+        if cards is None or (hasattr(cards, 'empty') and cards.empty):
             st.warning("No cards to display.")
             return
+            
+        # Convert to DataFrame if needed
+        if isinstance(cards, list):
+            df = pd.DataFrame([card.to_dict() if hasattr(card, 'to_dict') else card for card in cards])
+        else:
+            df = cards.copy()
+            
+        # Select and rename columns for display
+        display_df = df[[
+            'player_name', 'year', 'card_set', 'condition',
+            'purchase_price', 'current_value', 'roi', 'tags'
+        ]].copy()
         
-        # Convert cards to DataFrame
-        df = pd.DataFrame([
-            {
-                'Player': card.player_name if hasattr(card, 'player_name') else card.get('player_name', ''),
-                'Year': card.year if hasattr(card, 'year') else card.get('year', ''),
-                'Set': card.card_set if hasattr(card, 'card_set') else card.get('card_set', ''),
-                'Number': card.card_number if hasattr(card, 'card_number') else card.get('card_number', ''),
-                'Condition': card.condition if hasattr(card, 'condition') else card.get('condition', ''),
-                'Purchase Price': card.purchase_price if hasattr(card, 'purchase_price') else card.get('purchase_price', 0),
-                'Current Value': card.current_value if hasattr(card, 'current_value') else card.get('current_value', 0),
-                'ROI': card.roi if hasattr(card, 'roi') else card.get('roi', 0)
-            }
-            for card in cards
-        ])
+        # Rename columns for better display
+        display_df.columns = [
+            'Player', 'Year', 'Set', 'Condition',
+            'Purchase Price', 'Current Value', 'ROI (%)', 'Tags'
+        ]
         
-        # Format currency columns
-        df['Purchase Price'] = df['Purchase Price'].apply(lambda x: f"${x:.2f}")
-        df['Current Value'] = df['Current Value'].apply(lambda x: f"${x:.2f}")
-        df['ROI'] = df['ROI'].apply(lambda x: f"{x:.1f}%")
+        # Format numeric columns
+        display_df['Purchase Price'] = display_df['Purchase Price'].apply(lambda x: f"${float(x):.2f}")
+        display_df['Current Value'] = display_df['Current Value'].apply(lambda x: f"${float(x):.2f}")
+        display_df['ROI (%)'] = display_df['ROI (%)'].apply(lambda x: f"{float(x):.1f}%")
         
-        # Display table
+        # Display the table
         st.dataframe(
-            df,
-            hide_index=True,
-            use_container_width=True
-        ) 
+            display_df,
+            use_container_width=True,
+            hide_index=True
+        )
 
 def display_image(image_data: str, use_container_width=True):
     """Display an image from various sources (URL, base64, or file path)"""
@@ -376,3 +362,13 @@ def display_image(image_data: str, use_container_width=True):
 def display_dataframe(df, use_container_width=True):
     """Display a dataframe with proper formatting"""
     st.dataframe(df, use_container_width=use_container_width, hide_index=True) 
+
+def has_cards(collection):
+    """Check if collection has any cards"""
+    if collection is None:
+        return False
+    if isinstance(collection, pd.DataFrame):
+        return not collection.empty
+    if isinstance(collection, list):
+        return len(collection) > 0
+    return False 

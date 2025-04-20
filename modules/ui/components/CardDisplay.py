@@ -95,13 +95,13 @@ class CardDisplay:
                         player = card.player_name
                         year = card.year
                         card_set = card.card_set
-                        value = card.current_value
+                        value = float(getattr(card, 'current_value', 0) or 0)
                     else:
                         photo = card.get('photo', '') or 'https://placehold.co/160x220?text=No+Image'
                         player = card.get('player_name', '')
                         year = card.get('year', '')
                         card_set = card.get('card_set', '')
-                        value = card.get('current_value', 0)
+                        value = float(card.get('current_value', 0) or 0)
 
                     # Card visual
                     st.markdown(f"""
@@ -263,9 +263,9 @@ def render_card_display(card):
         else:
             photo = card.get('photo', '')
         if photo:
-            st.image(photo, use_column_width=True)
+            st.image(photo, use_container_width=True)
         else:
-            st.image('https://placehold.co/300x400?text=No+Image', use_column_width=True)
+            st.image('https://placehold.co/300x400?text=No+Image', use_container_width=True)
 
     with col2:
         # Display card details
