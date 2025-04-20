@@ -38,6 +38,7 @@ class Card:
     photo: str
     roi: float
     tags: List[str]
+    created_at: Optional[datetime] = None
 
     @classmethod
     def from_dict(cls, data: Dict) -> 'Card':
@@ -58,6 +59,39 @@ class Card:
             last_updated = datetime.fromisoformat(data.get('last_updated', datetime.now().isoformat()))
         except ValueError:
             last_updated = datetime.now()
+            
+        # Handle created_at date with multiple format support
+        created_at = None
+        created_at_str = data.get('created_at')
+        if created_at_str:
+            try:
+                if isinstance(created_at_str, str):
+                    if 'T' in created_at_str:
+                        # Try ISO format
+                        if '+' in created_at_str:
+                            created_at_str = created_at_str.split('+')[0]
+                        if '.' in created_at_str:
+                            created_at_str = created_at_str.split('.')[0]
+                        created_at = datetime.fromisoformat(created_at_str)
+                    elif len(created_at_str) == 10:
+                        # Try YYYY-MM-DD format
+                        created_at = datetime.strptime(created_at_str, '%Y-%m-%d')
+                    else:
+                        # Try other formats
+                        formats = ['%Y-%m-%d %H:%M:%S', '%m/%d/%Y']
+                        for fmt in formats:
+                            try:
+                                created_at = datetime.strptime(created_at_str, fmt)
+                                break
+                            except ValueError:
+                                continue
+            except Exception:
+                # If all parsing fails, use current time
+                pass
+                
+        # Default to current time if parsing failed or no created_at provided
+        if created_at is None:
+            created_at = datetime.now()
 
         # Handle photo data
         photo = data.get('photo', '')
@@ -83,26 +117,53 @@ class Card:
             notes=data.get('notes', ''),
             photo=photo,
             roi=float(data.get('roi', 0.0)),
-            tags=tags
+            tags=tags,
+            created_at=created_at
         )
 
     def to_dict(self):
         """Convert card to dictionary format"""
+        # Ensure dates are in ISO format for Firestore
+        purchase_date = self.purchase_date
+        if isinstance(purchase_date, (datetime, date)):
+            purchase_date = purchase_date.isoformat()
+            
+        last_updated = self.last_updated
+        if isinstance(last_updated, (datetime, date)):
+            last_updated = last_updated.isoformat()
+            
+        created_at = self.created_at
+        if created_at is None:
+            created_at = datetime.now().isoformat()
+        elif isinstance(created_at, (datetime, date)):
+            created_at = created_at.isoformat()
+            
+        # Ensure condition is a string value
+        condition = self.condition
+        if isinstance(condition, CardCondition):
+            condition = condition.value
+            
+        # Ensure photo is properly handled
+        photo = self.photo
+        if not photo:
+            photo = "https://placehold.co/300x400/e6e6e6/666666.png?text=No+Card+Image"
+            
         return {
-            'player_name': self.player_name,
-            'year': self.year,
-            'card_set': self.card_set,
-            'card_number': self.card_number,
-            'variation': self.variation,
-            'condition': self.condition if isinstance(self.condition, str) else self.condition.value,
-            'purchase_price': self.purchase_price,
-            'purchase_date': self.purchase_date.strftime('%Y-%m-%d') if isinstance(self.purchase_date, (datetime, date)) else self.purchase_date,
-            'current_value': self.current_value,
-            'last_updated': self.last_updated.strftime('%Y-%m-%d') if isinstance(self.last_updated, (datetime, date)) else self.last_updated,
-            'notes': self.notes,
-            'roi': self.roi,
-            'tags': self.tags,
-            'photo': self.photo
+            'player_name': str(self.player_name),
+            'year': str(self.year),
+            'card_set': str(self.card_set),
+            'card_number': str(self.card_number),
+            'variation': str(self.variation),
+            'condition': condition,
+            'purchase_price': float(self.purchase_price),
+            'purchase_date': purchase_date,
+            'current_value': float(self.current_value),
+            'last_updated': last_updated,
+            'notes': str(self.notes),
+            'roi': float(self.roi),
+            'tags': [str(tag) for tag in self.tags],
+            'photo': photo,
+            'created_at': created_at
         }
 
 @dataclass

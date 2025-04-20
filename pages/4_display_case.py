@@ -14,474 +14,329 @@ from pathlib import Path
 from modules.display_case.manager import DisplayCaseManager
 import ast
 from modules.database.service import DatabaseService
+import requests
+from modules.core.firebase_manager import FirebaseManager
+from modules.ui.components.CardDisplay import CardDisplay
+from modules.ui.branding import BrandingComponent
+from modules.ui.theme.theme_manager import ThemeManager
+import sys
+from modules.core.collection_manager import CollectionManager
 
+# Add the project root directory to the Python path
+project_root = str(Path(__file__).parent.parent)
+if project_root not in sys.path:
+    sys.path.append(project_root)
+
+# Set page config must be the first Streamlit command
 st.set_page_config(
-    page_title="Display Case - Sports Card Analyzer Pro",
-    page_icon="",
+    page_title="Display Case",
+    page_icon="image",
     layout="wide",
-    initial_sidebar_state="collapsed"
+    initial_sidebar_state="expanded",
+    menu_items={
+        'Get Help': 'https://github.com/jordanreedlinford/SportsCardAnalyzer-6/issues',
+        'Report a bug': 'https://github.com/jordanreedlinford/SportsCardAnalyzer-6/issues',
+        'About': 'Sports Card Analyzer - Display Case Manager'
+    }
 )
 
-backgrounds = {
-    "Minimal Dark": {
-        "gradient": "linear-gradient(135deg, #1c1c1c, #2a2a2a)",
-        "text": "#ffffff",
-        "text_shadow": "2px 2px 4px rgba(0,0,0,0.5)"
-    },
-    "Steel Gray": {
-        "gradient": "linear-gradient(135deg, #3e3e3e, #1f1f1f)",
-        "text": "#ffffff",
-        "text_shadow": "2px 2px 4px rgba(0,0,0,0.5)"
-    },
-    "Soft Light": {
-        "gradient": "linear-gradient(135deg, #f0f0f0, #e0e0e0)",
-        "text": "#000000",
-        "text_shadow": "none"
-    },
-    "Blue Night": {
-        "gradient": "linear-gradient(135deg, #1a2a6c, #b21f1f, #fdbb2d)",
-        "text": "#ffffff",
-        "text_shadow": "2px 2px 4px rgba(0,0,0,0.5)"
-    }
-}
+# Apply theme styles
+ThemeManager.apply_theme_styles()
 
-def init_session_state():
-    if 'display_case_manager' not in st.session_state:
-        st.session_state.display_case_manager = None
-    if 'collection' not in st.session_state:
-        st.session_state.collection = pd.DataFrame(columns=[
-            'player_name', 'year', 'card_set', 'card_number', 'variation',
-            'condition', 'purchase_price', 'purchase_date', 'current_value',
-            'last_updated', 'notes', 'photo', 'roi', 'tags'
-        ])
+# Add branding to sidebar
+with st.sidebar:
+    st.markdown('<div class="logo-container">', unsafe_allow_html=True)
+    BrandingComponent.display_horizontal_logo()
+    st.markdown('</div>', unsafe_allow_html=True)
+
+# Initialize session state variables
+if 'user' not in st.session_state:
+    st.session_state.user = None
+if 'uid' not in st.session_state:
+    st.session_state.uid = None
+
+# Add custom CSS for persistent branding
+st.markdown("""
+    <style>
+        /* Header container */
+        .stApp > header {
+            background-color: white;
+            padding: 1rem;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        
+        /* Sidebar container */
+        .stSidebar {
+            background-color: white;
+            padding: 1rem;
+        }
+        
+        /* Logo container in header */
+        .stApp > header .logo-container {
+            margin: 0;
+            padding: 0;
+        }
+        
+        /* Logo container in sidebar */
+        .stSidebar .logo-container {
+            margin-bottom: 1rem;
+            padding: 0.5rem;
+            border-bottom: 1px solid rgba(0,0,0,0.1);
+        }
+        
+        /* Dark mode overrides */
+        @media (prefers-color-scheme: dark) {
+            .stApp > header {
+                background-color: #111111;
+            }
+            
+            .stSidebar {
+                background-color: #111111;
+            }
+            
+            .stSidebar .logo-container {
+                border-bottom-color: rgba(255,255,255,0.1);
+            }
+        }
+    </style>
+""", unsafe_allow_html=True)
+
+# Apply theme and branding styles
+ThemeManager.apply_theme_styles()
+BrandingComponent.add_branding_styles()
+
+def display_case_grid(cards):
+    """Display cards in a grid with hover effects"""
+    if not cards:
+        st.info("No cards found in this display case")
+        return
+
+    # Add custom CSS for hover effects
+    st.markdown("""
+        <style>
+        .card-container {
+            position: relative;
+            width: 100%;
+            margin-bottom: 1rem;
+            border-radius: 8px;
+            overflow: hidden;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .card-image {
+            width: 100%;
+            height: 300px;
+            object-fit: cover;
+            transition: 0.3s;
+        }
+        .card-info {
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0, 0, 0, 0.8);
+            color: white;
+            padding: 1rem;
+            display: none;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            text-align: center;
+            opacity: 0;
+            transition: opacity 0.3s;
+        }
+        .card-container:hover .card-info {
+            display: flex;
+            opacity: 1;
+        }
+        .card-container:hover .card-image {
+            transform: scale(1.05);
+        }
+        .card-title {
+            font-size: 1.2rem;
+            font-weight: bold;
+            margin-bottom: 0.5rem;
+        }
+        .card-details {
+            font-size: 0.9rem;
+            margin-bottom: 0.25rem;
+        }
+        .card-value {
+            font-size: 1rem;
+            font-weight: bold;
+            color: #4CAF50;
+        }
+        </style>
+    """, unsafe_allow_html=True)
+
+    # Display cards in a grid with 4 columns
+    cols = st.columns(4)
+    for idx, card in enumerate(cards):
+        col = cols[idx % 4]
+        with col:
+            # Create card container with hover effect
+            st.markdown(f"""
+                <div class="card-container">
+                    <img class="card-image" src="{card.get('photo', 'https://placehold.co/300x400/e6e6e6/666666.png?text=No+Image')}" alt="Card Image">
+                    <div class="card-info">
+                        <div class="card-title">{card.get('player_name', 'Unknown')}</div>
+                        <div class="card-details">{card.get('year', '')} {card.get('card_set', '')} #{card.get('card_number', '')}</div>
+                        <div class="card-details">Condition: {card.get('condition', 'Unknown')}</div>
+                        <div class="card-value">${card.get('value', 0):,.2f}</div>
+                    </div>
+                </div>
+            """, unsafe_allow_html=True)
+
+def create_new_display_case(display_case_manager, collection):
+    """Create a new display case"""
+    st.subheader("Create New Display Case")
+    
+    # Get all unique tags from the collection
+    all_tags = set()
+    if isinstance(collection, pd.DataFrame):
+        # Handle DataFrame collection
+        if 'tags' in collection.columns:
+            for tags in collection['tags'].dropna():
+                if isinstance(tags, str):
+                    try:
+                        parsed = ast.literal_eval(tags)
+                        if isinstance(parsed, list):
+                            all_tags.update(str(tag).strip().lower() for tag in parsed if tag)
+                        else:
+                            all_tags.update(tag.strip().lower() for tag in tags.split(',') if tag.strip())
+                    except:
+                        all_tags.update(tag.strip().lower() for tag in tags.split(',') if tag.strip())
+    else:
+        # Handle list collection
+        for card in collection:
+            if isinstance(card, dict):
+                tags = card.get('tags', [])
+            else:
+                tags = card.tags if hasattr(card, 'tags') else []
+            
+            if isinstance(tags, str):
+                try:
+                    parsed = ast.literal_eval(tags)
+                    if isinstance(parsed, list):
+                        all_tags.update(str(tag).strip().lower() for tag in parsed if tag)
+                    else:
+                        all_tags.update(tag.strip().lower() for tag in tags.split(',') if tag.strip())
+                except:
+                    all_tags.update(tag.strip().lower() for tag in tags.split(',') if tag.strip())
+            elif isinstance(tags, list):
+                all_tags.update(str(tag).strip().lower() for tag in tags if tag)
+    
+    # Create form for new display case
+    with st.form("new_display_case"):
+        name = st.text_input("Display Case Name")
+        description = st.text_area("Description")
+        selected_tags = st.multiselect("Select Tags", sorted(list(all_tags)))
+        
+        submitted = st.form_submit_button("Create Display Case")
+        
+        if submitted:
+            if not name:
+                st.error("Please enter a name for the display case")
+                return
+                
+            if not selected_tags:
+                st.error("Please select at least one tag")
+                return
+                
+            # Create the display case
+            success = display_case_manager.create_display_case(name, description, selected_tags)
+            if success:
+                st.success(f"Display case '{name}' created successfully!")
+                st.rerun()
+            else:
+                st.error("Failed to create display case")
+
+def main():
+    # Initialize session state for user if not exists
     if 'user' not in st.session_state:
         st.session_state.user = None
     if 'uid' not in st.session_state:
         st.session_state.uid = None
-    if 'bg_choice' not in st.session_state:
-        st.session_state.bg_choice = "Minimal Dark"
-    if 'last_uid' not in st.session_state:
-        st.session_state.last_uid = None
-
-def display_case_grid(display_case):
-    """Display cards in a grid format, dynamically filtered from current collection"""
-    if not display_case:
-        st.info("No display case selected")
-        return
-
-    if not display_case.get('cards'):
-        st.info("No cards found in this display case")
-        return
-
-    # Add custom CSS for fixed width container
-    st.markdown("""
-        <style>
-        .fixed-width-container {
-            width: 100%;
-            min-width: 800px;
-            margin: 0 auto;
-        }
-        </style>
-        """, unsafe_allow_html=True)
-
-    # Create a container for the grid
-    with st.container():
-        st.markdown('<div class="fixed-width-container">', unsafe_allow_html=True)
-        
-        # Process cards in groups of 3
-        for i in range(0, len(display_case['cards']), 3):
-            # Create a row with 3 columns
-            cols = st.columns(3)
-            
-            # Display up to 3 cards in this row
-            for j in range(3):
-                if i + j < len(display_case['cards']):
-                    card = display_case['cards'][i + j]
-                    with cols[j]:
-                        try:
-                            if card.get('photo'):
-                                photo = card['photo']
-                                # Check if the photo is a base64 string
-                                if isinstance(photo, str) and photo.startswith('data:image'):
-                                    try:
-                                        # Extract the base64 part
-                                        base64_data = photo.split(',')[1]
-                                        # Decode the base64 string
-                                        image_data = base64.b64decode(base64_data)
-                                        # Create an image from the bytes
-                                        image = Image.open(io.BytesIO(image_data))
-                                        # Display the image
-                                        st.image(image, use_container_width=True)
-                                    except Exception as e:
-                                        st.error(f"Failed to load base64 image: {str(e)}")
-                                # Check if the photo is a URL
-                                elif isinstance(photo, str) and (photo.startswith('http://') or photo.startswith('https://')):
-                                    # Display the image from URL
-                                    st.image(photo, use_container_width=True)
-                                else:
-                                    st.warning("Invalid image format")
-                        except Exception as e:
-                            st.error(f"Failed to display card: {str(e)}")
-                            st.write("Card data:", card)
-        
-        st.markdown('</div>', unsafe_allow_html=True)
-
-def export_display_case(display_case):
-    """Export display case data as a JSON file with enhanced card details."""
-    try:
-        export_data = {
-            'display_case': {
-                'name': display_case.get('name', ''),
-                'description': display_case.get('description', ''),
-                'tags': display_case.get('tags', []),
-                'created_date': display_case.get('created_date', ''),
-                'total_value': display_case.get('total_value', 0),
-                'total_cards': len(display_case.get('cards', []))
-            },
-            'cards': []
-        }
-        
-        for card in display_case.get('cards', []):
-            # Create a new dictionary with only serializable data
-            card_data = {
-                'player_name': str(card.get('player_name', '')),
-                'year': str(card.get('year', '')),
-                'card_set': str(card.get('card_set', '')),
-                'card_number': str(card.get('card_number', '')),
-                'variation': str(card.get('variation', '')),
-                'condition': str(card.get('condition', '')),
-                'current_value': float(card.get('current_value', 0)),
-                'purchase_price': float(card.get('purchase_price', 0)),
-                'purchase_date': str(card.get('purchase_date', '')),
-                'roi': float(card.get('roi', 0)),
-                'notes': str(card.get('notes', '')),
-                'photo': str(card.get('photo', '')),
-                'tags': [str(tag) for tag in card.get('tags', [])]
-            }
-            export_data['cards'].append(card_data)
-        
-        # Format the JSON with indentation for better readability
-        return json.dumps(export_data, indent=2)
-    except Exception as e:
-        # Log the error and return error response
-        print(f"Error in export_display_case: {str(e)}")
-        traceback.print_exc()
-        return json.dumps({
-            'error': str(e),
-            'traceback': traceback.format_exc()
-        }, indent=2)
-
-def create_backup():
-    """Create a backup of all display cases and save as a zip file on desktop."""
-    try:
-        # Get the desktop path
-        desktop = str(Path.home() / "Desktop")
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        backup_dir = os.path.join(desktop, f"Sports_Card_Analyzer_Pro_Backup_{timestamp}")
-        
-        # Create backup directory
-        os.makedirs(backup_dir, exist_ok=True)
-        
-        # Export each display case
-        for case_name, display_case in st.session_state.display_case_manager.display_cases.items():
-            # Create a safe filename
-            safe_name = case_name.lower().replace(' ', '_')
-            file_path = os.path.join(backup_dir, f"{safe_name}.json")
-            
-            # Export the display case data
-            export_data = export_display_case(display_case)
-            
-            # Save to file
-            with open(file_path, 'w') as f:
-                f.write(export_data)
-        
-        # Create zip file
-        zip_path = f"{backup_dir}.zip"
-        with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
-            for root, dirs, files in os.walk(backup_dir):
-                for file in files:
-                    file_path = os.path.join(root, file)
-                    arcname = os.path.relpath(file_path, backup_dir)
-                    zipf.write(file_path, arcname)
-        
-        # Clean up the backup directory
-        for root, dirs, files in os.walk(backup_dir, topdown=False):
-            for name in files:
-                os.remove(os.path.join(root, name))
-            for name in dirs:
-                os.rmdir(os.path.join(root, name))
-        os.rmdir(backup_dir)
-        
-        return zip_path
-    except Exception as e:
-        st.error(f"Failed to create backup: {str(e)}")
-        return None
-
-def create_display_case_form():
-    """Display form for creating a new display case"""
-    st.subheader("Create New Display Case")
     
-    # Show debug information
-    if st.button("Show Collection Debug Info"):
-        st.session_state.display_case_manager.debug_collection()
+    # If user is not logged in, redirect to login page
+    if not st.session_state.user:
+        st.switch_page("pages/0_login.py")
     
-    # Get all available tags
-    all_tags = st.session_state.display_case_manager.get_all_tags()
-    
-    # Create two columns for the form
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        # Display case name
-        name = st.text_input("Display Case Name")
-        
-        # Tag selection
-        selected_tag = st.selectbox("Select Tag", options=all_tags)
-        
-        # Preview button
-        if st.button("Preview Cards"):
-            if selected_tag:
-                matching_cards = []
-                
-                # Handle both DataFrame and list formats
-                if isinstance(st.session_state.collection, pd.DataFrame):
-                    for idx, card in st.session_state.collection.iterrows():
-                        card_dict = card.to_dict()
-                        card_tags = card_dict.get('tags', [])
-                        
-                        # Convert tags to list if it's a string
-                        if isinstance(card_tags, str):
-                            card_tags = [t.strip() for t in card_tags.split(',')]
-                        elif not isinstance(card_tags, list):
-                            card_tags = []
-                        
-                        # Check if the tag exists in the card's tags
-                        if selected_tag.lower() in [t.lower() for t in card_tags]:
-                            matching_cards.append(card_dict)
-                else:
-                    # Handle list format
-                    for card in st.session_state.collection:
-                        # Convert Card object to dictionary if needed
-                        if hasattr(card, 'to_dict'):
-                            card_dict = card.to_dict()
-                        else:
-                            card_dict = card
-                        
-                        card_tags = card_dict.get('tags', [])
-                        
-                        # Convert tags to list if it's a string
-                        if isinstance(card_tags, str):
-                            card_tags = [t.strip() for t in card_tags.split(',')]
-                        elif not isinstance(card_tags, list):
-                            card_tags = []
-                        
-                        # Check if the tag exists in the card's tags
-                        if selected_tag.lower() in [t.lower() for t in card_tags]:
-                            matching_cards.append(card_dict)
-                
-                if matching_cards:
-                    st.success(f"Found {len(matching_cards)} cards with tag '{selected_tag}'")
-                    
-                    # Display preview grid
-                    cols = st.columns(3)
-                    for idx, card in enumerate(matching_cards):
-                        col = cols[idx % 3]
-                        with col:
-                            try:
-                                # Display card image if available
-                                if card.get('photo'):
-                                    st.image(card['photo'], use_container_width=True)
-                                
-                                # Display card details
-                                st.markdown(f"""
-                                    **{card.get('player_name', 'Unknown')}**
-                                    - Year: {card.get('year', 'N/A')}
-                                    - Value: ${card.get('current_value', 0):,.2f}
-                                """)
-                            except Exception as e:
-                                st.error(f"Error displaying card: {str(e)}")
-                else:
-                    st.warning(f"No cards found with tag '{selected_tag}'")
-    
-    with col2:
-        # Create display case button
-        if st.button("Create Display Case"):
-            if not name:
-                st.error("Please enter a name for the display case")
-                return
-            
-            if not selected_tag:
-                st.error("Please select a tag")
-                return
-            
-            try:
-                # Debug logging
-                st.write("Debug: Creating display case...")
-                st.write(f"Debug: Name: {name}")
-                st.write(f"Debug: Tag: {selected_tag}")
-                st.write(f"Debug: Collection type: {type(st.session_state.collection)}")
-                
-                # Create the display case
-                display_case = st.session_state.display_case_manager.create_simple_display_case(
-                    name=name,
-                    tag=selected_tag
-                )
-                
-                if display_case:
-                    st.success(f"Created display case '{name}' with {len(display_case.get('cards', []))} cards")
-                    st.session_state.current_display_case = display_case
-                else:
-                    st.error("Failed to create display case. Please check the debug information above.")
-            except Exception as e:
-                st.error(f"Error creating display case: {str(e)}")
-                st.write("Debug: Error details:")
-                st.write(f"Error type: {type(e).__name__}")
-                st.write(f"Error message: {str(e)}")
-                import traceback
-                st.write("Debug: Full traceback:")
-                st.code(traceback.format_exc())
-
-def has_cards(collection):
-    """Helper function to check if collection has any cards."""
-    if collection is None:
-        return False
-    if isinstance(collection, pd.DataFrame):
-        return not collection.empty
-    if isinstance(collection, list):
-        return len(collection) > 0
-    return False
-
-def main():
     st.title("Display Case")
-    init_session_state()
     
-    # Check if user has changed
-    if st.session_state.uid != st.session_state.last_uid:
-        st.session_state.display_case_manager = None
-        st.session_state.last_uid = st.session_state.uid
-
-    # Load collection if needed
-    if st.session_state.uid:
-        if not has_cards(st.session_state.collection):
-            db = DatabaseService()
-            collection_data = db.get_user_collection(st.session_state.uid)
-            
-            if isinstance(collection_data, list) and len(collection_data) > 0:
-                # Convert Card objects to dictionaries, ensuring tags are properly handled
-                cards_dict = []
-                for card in collection_data:
-                    try:
-                        if hasattr(card, 'to_dict'):
-                            card_dict = card.to_dict()
-                        else:
-                            card_dict = dict(card)
-                        # Ensure tags are in list format
-                        if isinstance(card_dict.get('tags'), str):
-                            card_dict['tags'] = [tag.strip() for tag in card_dict['tags'].split(',') if tag.strip()]
-                        elif not isinstance(card_dict.get('tags'), list):
-                            card_dict['tags'] = []
-                        cards_dict.append(card_dict)
-                    except Exception as e:
-                        st.error(f"Error processing card: {str(e)}")
-                
-                st.session_state.collection = pd.DataFrame(cards_dict)
-            elif isinstance(collection_data, pd.DataFrame) and not collection_data.empty:
-                st.session_state.collection = collection_data
-            else:
-                st.session_state.collection = pd.DataFrame()
-
-    # Initialize display case manager with the loaded collection
-    if st.session_state.display_case_manager is None and st.session_state.uid:
-        if has_cards(st.session_state.collection):
-            st.session_state.display_case_manager = DisplayCaseManager(
-                st.session_state.uid,
-                st.session_state.collection
-            )
-            # Force refresh to ensure tags are loaded
-            st.session_state.display_case_manager.load_display_cases(force_refresh=True)
-
-    if not st.session_state.uid:
-        st.error("Please log in to view and manage your display cases")
+    # Get user ID
+    uid = st.session_state.uid
+    if not uid:
+        st.error("User ID not found")
         return
 
-    tab1, tab2 = st.tabs(["Create Display Case", "View Display Cases"])
+    # Get user's collection
+    collection = DatabaseService.get_user_collection(uid)
+    if collection is None:
+        st.error("Failed to load collection")
+        return
+
+    # Initialize display case manager
+    display_case_manager = DisplayCaseManager(uid, collection)
+
+    # Create tabs for different sections
+    tab1, tab2 = st.tabs(["View Display Cases", "Create New Display Case"])
     
     with tab1:
-        # Display case creation section
-        with st.expander("Create New Display Case", expanded=True):
-            st.subheader("Create New Display Case")
-            # Get display case name
-            display_case_name = st.text_input("Display Case Name", key="new_display_case_name")
+        # Add refresh button
+        if st.button("🔄 Refresh Display Cases", key="refresh_display_cases"):
+            st.cache_data.clear()
+            # Force a rerun to update the display cases
+            st.rerun()
+
+        # Display existing display cases
+        display_cases = DisplayCaseManager.load_display_cases(uid, collection)
+        
+        if display_cases:
+            # Create a dropdown to select a display case
+            case_names = [case.name for case in display_cases]
+            selected_case_name = st.selectbox("Select a Display Case", case_names)
             
-            # Get available tags
-        if st.session_state.display_case_manager:
-            available_tags = st.session_state.display_case_manager.get_all_tags()
-            if available_tags:
-                tag = st.selectbox("Select Tag", options=available_tags, key="new_display_case_tag")
-            else:
-                st.warning("No tags found in your collection. Please add tags to your cards first.")
-                return
+            # Find the selected display case
+            selected_case = next((case for case in display_cases if case.name == selected_case_name), None)
             
-            if st.button("Create Display Case", key="create_display_case"):
-                if display_case_name and tag:
-                    try:
-                        # Create the display case
-                        display_case = st.session_state.display_case_manager.create_simple_display_case(display_case_name, tag)
-                        
-                        if display_case:
-                            st.success(f"Successfully created display case '{display_case_name}' with {len(display_case['cards'])} cards")
-                            st.rerun()  # Refresh the page to show the new display case
-                        else:
-                            st.error("Failed to create display case. Please try again.")
-                    except Exception as e:
-                        st.error(f"Error creating display case: {str(e)}")
-                else:
-                    st.warning("Please enter both a display case name and select a tag")
+            if selected_case:
+                # Add refresh button for the selected case
+                if st.button("🔄 Refresh Selected Case", key=f"refresh_{selected_case.id}"):
+                    manager = DisplayCaseManager(uid, collection)
+                    if manager.refresh_display_case(selected_case.id):
+                        st.success("Display case refreshed successfully!")
+                        st.cache_data.clear()
+                        st.rerun()
+                    else:
+                        st.error("Failed to refresh display case")
+
+                # Display case details
+                st.subheader(selected_case.name)
+                if selected_case.description:
+                    st.write(selected_case.description)
+                
+                # Display case stats
+                col1, col2 = st.columns(2)
+                with col1:
+                    st.metric("Total Cards", len(selected_case.cards))
+                with col2:
+                    st.metric("Total Value", f"${selected_case.total_value:,.2f}")
+                
+                # Display cards in a grid
+                display_case_grid(selected_case.cards)
+                
+                # Add delete button
+                if st.button("Delete Display Case", key=f"delete_{selected_case.name}"):
+                    if display_case_manager.delete_display_case(selected_case.id):
+                        st.success("Display case deleted successfully!")
+                        st.cache_data.clear()  # Clear cache after deletion
+                        st.rerun()
+                    else:
+                        st.error("Failed to delete display case")
     
     with tab2:
-        if st.session_state.display_case_manager is None:
-            st.info("Please add some cards to your collection first to create display cases.")
-            return
-            
-        display_cases = st.session_state.display_case_manager.display_cases
-        if display_cases:
-            selected_case = st.selectbox("Select Display Case", options=list(display_cases.keys()))
-            if selected_case:
-                display_case = display_cases[selected_case]
-                
-                # Display case details
-                st.subheader(display_case['name'])
-                if display_case.get('description'):
-                    st.write(display_case['description'])
-                if display_case.get('tags'):
-                    st.write(f"Tags: {', '.join(display_case['tags'])}")
-                st.write(f"Total Value: ${display_case.get('total_value', 0):,.2f}")
-                
-                # Display case actions
-                col1, col2, col3 = st.columns(3)
-                
-                with col1:
-                    if st.button("🔄 Refresh"):
-                        st.session_state.display_case_manager.load_display_cases(force_refresh=True)
-                        st.rerun()
-                
-                with col2:
-                    if st.button("🗑️ Delete"):
-                        if st.session_state.display_case_manager.delete_display_case(selected_case):
-                            st.success(f"Deleted display case: {selected_case}")
-                            st.rerun()
-                        else:
-                            st.error("Failed to delete display case")
-
-                with col3:
-                    share_url = st.session_state.display_case_manager.get_share_url(selected_case)
-                    if share_url:
-                        st.markdown(f"[🔗 Share]({share_url})")
-                
-                # Display the cards in a grid
-                display_case_grid(display_case)
-        else:
-            st.info("No display cases found. Create one using the form above!")
+        create_new_display_case(display_case_manager, collection)
 
 if __name__ == "__main__":
-    main() 
+    main()

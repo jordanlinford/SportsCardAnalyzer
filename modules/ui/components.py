@@ -8,25 +8,33 @@ import plotly.graph_objects as go
 from datetime import datetime, timedelta
 from modules.core.profit_calculator import ProfitCalculator
 from modules.core.grading_analyzer import GradingAnalyzer
+from PIL import Image
+import base64
+from io import BytesIO
+from modules.ui.indicators import TrendIndicator
 
 class CardDisplay:
     @staticmethod
-    def display_image(image_url: Optional[str] = None, show_placeholder: bool = False, width: int = 300):
+    def display_image(image_url: Optional[str] = None, show_placeholder: bool = False):
         """Display card image with fallback."""
+        # Convert image_url to string if it's not None
+        if image_url is not None:
+            image_url = str(image_url)
+        
         if not image_url or not image_url.strip():
-            st.image("https://placehold.co/300x400/e6e6e6/666666.png?text=No+Card+Image", width=width)
+            st.image("https://placehold.co/300x400/e6e6e6/666666.png?text=No+Card+Image", use_container_width=True)
             return
 
         try:
             # Handle base64 images
             if isinstance(image_url, str) and image_url.startswith('data:image'):
                 try:
-                    st.image(image_url, width=width)
+                    st.image(image_url, use_container_width=True)
                     return
                 except Exception as e:
                     if show_placeholder:
                         st.warning(f"Failed to load base64 image: {str(e)}")
-                    st.image("https://placehold.co/300x400/e6e6e6/666666.png?text=Invalid+Base64", width=width)
+                    st.image("https://placehold.co/300x400/e6e6e6/666666.png?text=Invalid+Base64", use_container_width=True)
                     return
 
             # Clean and format the URL
@@ -64,15 +72,15 @@ class CardDisplay:
 
             # Convert to image bytes and display
             image_bytes = io.BytesIO(response.content)
-            st.image(image_bytes, width=width)
+            st.image(image_bytes, use_container_width=True)
 
         except Exception as e:
             # If the first attempt fails, try direct loading
             try:
-                st.image(image_url, width=width)
+                st.image(image_url, use_container_width=True)
             except:
                 # If both attempts fail, show placeholder
-                st.image("https://placehold.co/300x400/e6e6e6/666666.png?text=Image+Load+Failed", width=width)
+                st.image("https://placehold.co/300x400/e6e6e6/666666.png?text=Image+Load+Failed", use_container_width=True)
                 if show_placeholder:
                     st.warning(f"Failed to load image: {str(e)}")
 
@@ -239,22 +247,9 @@ class CardDisplay:
         )
         
         # Generate market status
-        if sentiment >= 7.5:
-            market_status = "🟢 Very Strong"
-            market_summary = "The market shows exceptional strength with positive trends across multiple indicators."
-        elif sentiment >= 6:
-            market_status = "🟡 Strong"
-            market_summary = "The market demonstrates solid performance with good fundamentals."
-        elif sentiment >= 4.5:
-            market_status = "🟡 Stable"
-            market_summary = "The market appears stable with balanced supply and demand."
-        else:
-            market_status = "🔴 Cautious"
-            market_summary = "The market shows some uncertainty and may require careful consideration."
-        
-        # Display market overview
-        st.markdown(f"#### Market Status: {market_status}")
-        st.markdown(market_summary)
+        market_status = TrendIndicator.get_market_status(sentiment)
+        st.markdown(f"#### Market Status: {market_status['status']}")
+        st.markdown(market_status['summary'])
         
         # Display detailed analysis
         st.markdown("#### Key Insights")
@@ -262,27 +257,27 @@ class CardDisplay:
         
         # Trend Analysis
         if scores['trend_score'] >= 7:
-            insights.append("📈 Strong upward price trend")
+            insights.append("UP: Strong upward price trend")
         elif scores['trend_score'] <= 3:
-            insights.append("📉 Significant price decline")
+            insights.append("DOWN: Significant price decline")
         
         # Momentum Analysis
         if scores['momentum_score'] >= 7:
-            insights.append("🚀 High positive momentum")
+            insights.append("MOMENTUM: High positive momentum")
         elif scores['momentum_score'] <= 3:
-            insights.append("🔻 Negative price momentum")
+            insights.append("MOMENTUM: Negative price momentum")
         
         # Volume Analysis
         if scores['volume_score'] >= 7:
-            insights.append("📊 High trading volume")
+            insights.append("VOLUME: High trading volume")
         elif scores['volume_score'] <= 3:
-            insights.append("📊 Low trading volume")
+            insights.append("VOLUME: Low trading volume")
         
         # Stability Analysis
         if scores['stability_score'] >= 7:
-            insights.append("🎯 High price stability")
+            insights.append("STABILITY: High price stability")
         elif scores['stability_score'] <= 3:
-            insights.append("🎯 High price volatility")
+            insights.append("STABILITY: High price volatility")
         
         for insight in insights:
             st.markdown(f"- {insight}")
@@ -422,27 +417,27 @@ class CardDisplay:
         
         # Trend Analysis
         if scores['trend_score'] >= 7:
-            insights.append("📈 Strong upward price trend")
+            insights.append("UP: Strong upward price trend")
         elif scores['trend_score'] <= 3:
-            insights.append("📉 Significant price decline")
+            insights.append("DOWN: Significant price decline")
         
         # Momentum Analysis
         if scores['momentum_score'] >= 7:
-            insights.append("🚀 High positive momentum")
+            insights.append("MOMENTUM: High positive momentum")
         elif scores['momentum_score'] <= 3:
-            insights.append("🔻 Negative price momentum")
+            insights.append("MOMENTUM: Negative price momentum")
         
         # Volume Analysis
         if scores['volume_score'] >= 7:
-            insights.append("📊 High trading volume")
+            insights.append("VOLUME: High trading volume")
         elif scores['volume_score'] <= 3:
-            insights.append("📊 Low trading volume")
+            insights.append("VOLUME: Low trading volume")
         
         # Stability Analysis
         if scores['stability_score'] >= 7:
-            insights.append("🎯 High price stability")
+            insights.append("STABILITY: High price stability")
         elif scores['stability_score'] <= 3:
-            insights.append("🎯 High price volatility")
+            insights.append("STABILITY: High price volatility")
         
         for insight in insights:
             st.markdown(f"- {insight}")
@@ -657,11 +652,54 @@ class CardDisplay:
             # Quick verdict
             st.markdown("#### Grading Recommendation")
             if psa10_profit > total_grading_cost * 2:
-                st.success("🟢 **GRADE IT!** - High profit potential at PSA 10")
+                st.success("GRADE IT - High profit potential at PSA 10")
             elif psa9_profit > total_grading_cost:
-                st.info("🔵 **Consider Grading** - Profitable at PSA 9")
+                st.info("CONSIDER GRADING - Profitable at PSA 9")
             else:
-                st.warning("🟡 **DON'T GRADE** - Grading costs exceed potential profit")
+                st.warning("DON'T GRADE - Grading costs exceed potential profit")
+
+    @staticmethod
+    def display_grid(collection: List[Dict], on_click: Optional[callable] = None):
+        """Display collection in a responsive grid layout."""
+        # Check if collection is empty
+        if isinstance(collection, pd.DataFrame):
+            if collection.empty:
+                st.info("No cards to display")
+                return
+            # Convert DataFrame to list of dictionaries
+            collection = collection.to_dict('records')
+        elif not collection:
+            st.info("No cards to display")
+            return
+        
+        # Calculate number of columns based on screen size
+        num_cols = 3  # Default to 3 columns
+        
+        # Create grid layout
+        for i in range(0, len(collection), num_cols):
+            cols = st.columns(num_cols)
+            for j in range(num_cols):
+                if i + j < len(collection):
+                    with cols[j]:
+                        card = collection[i + j]
+                        # Create card container
+                        with st.container():
+                            # Get photo value and ensure it's a string
+                            photo = card.get('photo')
+                            if photo is not None:
+                                photo = str(photo)
+                            # Display card image
+                            CardDisplay.display_image(photo)
+                            
+                            # Display card details
+                            st.markdown(f"**{card.get('player_name', 'Unknown')}**")
+                            st.markdown(f"*{card.get('year', '')} {card.get('card_set', '')}*")
+                            st.markdown(f"**{card.get('condition', '')}**")
+                            
+                            # Add click handler if provided
+                            if on_click:
+                                if st.button("View Details", key=f"view_{i+j}"):
+                                    on_click(i + j)
 
 class SearchForm:
     @staticmethod
@@ -704,4 +742,49 @@ class SearchForm:
                 'variation': variation,
                 'negative_keywords': negative_keywords,
                 'scenario': scenario
-            } 
+            }
+
+def display_image(image_data: str, use_container_width=True):
+    """Display an image from various sources (URL, base64, or file path)"""
+    try:
+        if not image_data:
+            st.image("https://placehold.co/300x400/e6e6e6/666666.png?text=No+Image", use_container_width=use_container_width)
+            return
+            
+        # Handle URL images
+        if image_data.startswith('http'):
+            try:
+                response = requests.get(image_data, timeout=5)
+                if response.status_code == 200:
+                    image = Image.open(BytesIO(response.content))
+                    st.image(image, use_container_width=use_container_width)
+                else:
+                    st.image("https://placehold.co/300x400/e6e6e6/666666.png?text=Image+Not+Available", use_container_width=use_container_width)
+            except:
+                st.image("https://placehold.co/300x400/e6e6e6/666666.png?text=Image+Not+Available", use_container_width=use_container_width)
+            return
+            
+        # Handle base64 images
+        if image_data.startswith('data:image'):
+            try:
+                base64_part = image_data.split(',')[1]
+                image_bytes = base64.b64decode(base64_part)
+                image = Image.open(BytesIO(image_bytes))
+                st.image(image, use_container_width=use_container_width)
+            except:
+                st.image("https://placehold.co/300x400/e6e6e6/666666.png?text=Invalid+Base64", use_container_width=use_container_width)
+            return
+            
+        # Handle file path images
+        try:
+            image = Image.open(image_data)
+            st.image(image, use_container_width=use_container_width)
+        except:
+            st.image("https://placehold.co/300x400/e6e6e6/666666.png?text=Image+Load+Failed", use_container_width=use_container_width)
+            
+    except Exception as e:
+        st.image("https://placehold.co/300x400/e6e6e6/666666.png?text=Image+Error", use_container_width=use_container_width)
+
+def display_dataframe(df, use_container_width=True):
+    """Display a dataframe with proper formatting"""
+    st.dataframe(df, use_container_width=use_container_width, hide_index=True) 

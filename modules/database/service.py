@@ -2,10 +2,15 @@ from typing import Dict, List, Optional
 from datetime import datetime
 from firebase_admin import firestore
 from .models import Card, UserPreferences
-from ..firebase.config import db
+from modules.core.firebase_manager import FirebaseManager
 import pandas as pd
 import base64
 import ast
+import io
+from PIL import Image
+import logging
+
+logger = logging.getLogger(__name__)
 
 class DatabaseService:
     _instance = None
@@ -19,26 +24,54 @@ class DatabaseService:
         
     def __init__(self):
         """Initialize the database service"""
-        self.db = db
+        self.db = None
+        self._initialize_db()
+
+    def _initialize_db(self):
+        """Initialize the database connection"""
+        try:
+            firebase_manager = FirebaseManager.get_instance()
+            if not firebase_manager._initialized:
+                if not firebase_manager.initialize():
+                    logger.error("Failed to initialize Firebase")
+                    return
+            self.db = firebase_manager.db
+        except Exception as e:
+            logger.error(f"Error initializing database: {str(e)}")
+            self.db = None
+
+    def _ensure_db_connection(self) -> bool:
+        """Ensure database connection is active"""
+        if not self.db:
+            self._initialize_db()
+        return self.db is not None
 
     @staticmethod
     def get_user_data(uid: str) -> Optional[Dict]:
         """Get user data from Firestore."""
         try:
-            user_doc = db.collection('users').document(uid).get()
+            service = DatabaseService.get_instance()
+            if not service._ensure_db_connection():
+                logger.error("Database connection not available")
+                return None
+
+            user_doc = service.db.collection('users').document(uid).get()
             if user_doc.exists:
                 return user_doc.to_dict()
             return None
         except Exception as e:
-            print(f"Error getting user data: {str(e)}")
-            import traceback
-            print(f"Traceback: {traceback.format_exc()}")
+            logger.error(f"Error getting user data: {str(e)}")
             return None
 
     @staticmethod
     def save_user_preferences(uid: str, preferences: Dict) -> bool:
         """Save user preferences to Firestore."""
         try:
+            service = DatabaseService.get_instance()
+            if not service._ensure_db_connection():
+                logger.error("Database connection not available")
+                return False
+
             # Ensure numeric values are properly formatted
             formatted_preferences = {
                 'defaultGradingCost': float(preferences.get('defaultGradingCost', 0)),
@@ -47,285 +80,179 @@ class DatabaseService:
             }
             
             # Update the preferences in Firestore
-            db.collection('users').document(uid).update({
-                'preferences': formatted_preferences
+            service.db.collection('users').document(uid).update({
+                'preferences': formatted_preferences,
+                'last_updated': datetime.now().isoformat()
             })
             
-            print(f"Updated preferences for user {uid}: {formatted_preferences}")
+            logger.info(f"Updated preferences for user {uid}: {formatted_preferences}")
             return True
         except Exception as e:
-            print(f"Error saving user preferences: {str(e)}")
-            import traceback
-            print(f"Traceback: {traceback.format_exc()}")
+            logger.error(f"Error saving user preferences: {str(e)}")
             return False
 
     @staticmethod
     def get_user_collection(uid: str) -> List[Card]:
-        """Get user's card collection from Firestore."""
+        """Get all cards from the user's collection."""
         try:
-            user_doc = db.collection('users').document(uid).get()
-            if user_doc.exists:
-                user_data = user_doc.to_dict()
-                if 'collection' in user_data:
-                    return [Card.from_dict(card_data) for card_data in user_data['collection']]
-            return []
+            service = DatabaseService.get_instance()
+            if not service._ensure_db_connection():
+                logger.error("Database connection not available")
+                return []
+
+            # Get the user's cards subcollection reference
+            cards_ref = service.db.collection('users').document(uid).collection('cards')
+            
+            # Get all card documents
+            card_docs = cards_ref.get()
+            
+            # Convert documents to Card objects
+            cards = []
+            for doc in card_docs:
+                try:
+                    card_data = doc.to_dict()
+                    card = Card.from_dict(card_data)
+                    cards.append(card)
+                except Exception as e:
+                    logger.error(f"Error converting card data to Card object: {str(e)}")
+                    continue
+            
+            logger.info(f"Successfully retrieved {len(cards)} cards from collection")
+            return cards
+            
         except Exception as e:
-            print(f"Error getting user collection: {str(e)}")
-            import traceback
-            print(f"Traceback: {traceback.format_exc()}")
+            logger.error(f"Error in get_user_collection: {str(e)}")
             return []
 
     @staticmethod
     def save_user_collection(uid: str, cards: List[Card]) -> bool:
         """Save user's card collection to Firestore."""
         try:
-            # Convert all cards to a simple dict format that Firestore can handle
-            collection_data = []
-            for card in cards:
-                try:
-                    # Handle both Card objects and dictionary records
-                    if isinstance(card, dict):
-                        # Handle photo data
-                        photo = card.get('photo', '')
-                        if photo:
-                            try:
-                                # Accept both base64 and URL formats
-                                if not (photo.startswith('data:image') or photo.startswith('http')):
-                                    print(f"Warning: Invalid photo data format for card {card.get('player_name', 'Unknown')}")
-                                    photo = ''
-                                elif photo.startswith('data:image'):
-                                    # Validate base64 content
-                                    try:
-                                        base64_part = photo.split(',')[1]
-                                        # Check size before decoding - increased to 2MB
-                                        if len(base64_part) > 2 * 1024 * 1024:  # 2MB limit
-                                            print(f"Warning: Photo data too large for card {card.get('player_name', 'Unknown')}")
-                                            # Try to compress the image
-                                            try:
-                                                import io
-                                                from PIL import Image
-                                                # Decode base64 to image
-                                                img_data = base64.b64decode(base64_part)
-                                                img = Image.open(io.BytesIO(img_data))
-                                                # Convert to RGB if necessary
-                                                if img.mode != 'RGB':
-                                                    img = img.convert('RGB')
-                                                # Calculate new size while maintaining aspect ratio
-                                                ratio = min(800/img.size[0], 1000/img.size[1])
-                                                new_size = (int(img.size[0]*ratio), int(img.size[1]*ratio))
-                                                img = img.resize(new_size, Image.LANCZOS)
-                                                # Save with compression
-                                                buffer = io.BytesIO()
-                                                img.save(buffer, format='JPEG', quality=85, optimize=True)
-                                                # Convert back to base64
-                                                photo = f"data:image/jpeg;base64,{base64.b64encode(buffer.getvalue()).decode()}"
-                                            except Exception as compress_error:
-                                                print(f"Warning: Failed to compress image for card {card.get('player_name', 'Unknown')}. Error: {str(compress_error)}")
-                                                photo = ''
-                                        else:
-                                            # Validate the base64 content
-                                            base64.b64decode(base64_part)
-                                    except Exception as e:
-                                        print(f"Warning: Invalid base64 image data for card {card.get('player_name', 'Unknown')}. Error: {str(e)}")
-                                        photo = ''
-                            except Exception as e:
-                                print(f"Warning: Error validating photo data for card {card.get('player_name', 'Unknown')}. Error: {str(e)}")
-                                photo = ''
-                        
-                        # Convert dictionary record to proper format
-                        card_dict = {
-                            'player_name': str(card.get('player_name', '')),
-                            'year': str(card.get('year', '')),
-                            'card_set': str(card.get('card_set', '')),
-                            'card_number': str(card.get('card_number', '')),
-                            'variation': str(card.get('variation', '')),
-                            'condition': str(card.get('condition', '')),
-                            'purchase_price': float(card.get('purchase_price', 0.0)),
-                            'purchase_date': str(card.get('purchase_date', datetime.now().isoformat())),
-                            'current_value': float(card.get('current_value', 0.0)),
-                            'last_updated': str(card.get('last_updated', datetime.now().isoformat())),
-                            'notes': str(card.get('notes', '')),
-                            'photo': photo,
-                            'roi': float(card.get('roi', 0.0)),
-                            'tags': [str(tag) for tag in card.get('tags', [])]
-                        }
-                    else:
-                        # Handle photo data for Card object
-                        photo = card.photo
-                        if photo:
-                            try:
-                                # Accept both base64 and URL formats
-                                if not (photo.startswith('data:image') or photo.startswith('http')):
-                                    print(f"Warning: Invalid photo data format for card {card.player_name}")
-                                    photo = ''
-                                elif photo.startswith('data:image'):
-                                    # Validate base64 content
-                                    try:
-                                        base64_part = photo.split(',')[1]
-                                        # Check size before decoding - increased to 2MB
-                                        if len(base64_part) > 2 * 1024 * 1024:  # 2MB limit
-                                            print(f"Warning: Photo data too large for card {card.player_name}")
-                                            # Try to compress the image
-                                            try:
-                                                import io
-                                                from PIL import Image
-                                                # Decode base64 to image
-                                                img_data = base64.b64decode(base64_part)
-                                                img = Image.open(io.BytesIO(img_data))
-                                                # Convert to RGB if necessary
-                                                if img.mode != 'RGB':
-                                                    img = img.convert('RGB')
-                                                # Calculate new size while maintaining aspect ratio
-                                                ratio = min(800/img.size[0], 1000/img.size[1])
-                                                new_size = (int(img.size[0]*ratio), int(img.size[1]*ratio))
-                                                img = img.resize(new_size, Image.LANCZOS)
-                                                # Save with compression
-                                                buffer = io.BytesIO()
-                                                img.save(buffer, format='JPEG', quality=85, optimize=True)
-                                                # Convert back to base64
-                                                photo = f"data:image/jpeg;base64,{base64.b64encode(buffer.getvalue()).decode()}"
-                                            except Exception as compress_error:
-                                                print(f"Warning: Failed to compress image for card {card.player_name}. Error: {str(compress_error)}")
-                                                photo = ''
-                                        else:
-                                            # Validate the base64 content
-                                            base64.b64decode(base64_part)
-                                    except Exception as e:
-                                        print(f"Warning: Invalid base64 image data for card {card.player_name}. Error: {str(e)}")
-                                        photo = ''
-                            except Exception as e:
-                                print(f"Warning: Error validating photo data for card {card.player_name}. Error: {str(e)}")
-                                photo = ''
-                        
-                        # Convert Card object to dict
-                        card_dict = {
-                            'player_name': str(card.player_name),
-                            'year': str(card.year),
-                            'card_set': str(card.card_set),
-                            'card_number': str(card.card_number),
-                            'variation': str(card.variation),
-                            'condition': str(card.condition.value),
-                            'purchase_price': float(card.purchase_price),
-                            'purchase_date': card.purchase_date.isoformat(),
-                            'current_value': float(card.current_value),
-                            'last_updated': card.last_updated.isoformat(),
-                            'notes': str(card.notes),
-                            'photo': photo,
-                            'roi': float(card.roi),
-                            'tags': [str(tag) for tag in card.tags]
-                        }
-                    
-                    # Check total document size before adding
-                    doc_size = len(str(card_dict).encode('utf-8')) / 1024  # Size in KB
-                    if doc_size > 900:  # Warning if approaching 1MB limit
-                        print(f"Warning: Card document for {card_dict['player_name']} is {doc_size:.1f}KB. Consider reducing size.")
-                    
-                    collection_data.append(card_dict)
-                except Exception as card_error:
-                    print(f"Error processing card: {str(card_error)}")
-                    import traceback
-                    print(f"Traceback: {traceback.format_exc()}")
-                    continue
-
-            if not collection_data:
-                print("No valid cards to save")
+            service = DatabaseService.get_instance()
+            if not service._ensure_db_connection():
+                logger.error("Database connection not available")
                 return False
 
-            # Get current collection
-            user_doc = db.collection('users').document(uid).get()
+            # Get the user's cards subcollection reference
+            cards_ref = service.db.collection('users').document(uid).collection('cards')
             
-            try:
-                if user_doc.exists:
-                    # Update existing collection
-                    db.collection('users').document(uid).update({
-                        'collection': collection_data,
-                        'updated_at': datetime.now().isoformat()
-                    })
-                    print(f"Successfully updated collection with {len(collection_data)} cards")
-                    return True
-                else:
-                    # Create new collection
-                    db.collection('users').document(uid).set({
-                        'collection': collection_data,
-                        'created_at': datetime.now().isoformat(),
-                        'updated_at': datetime.now().isoformat()
-                    })
-                    print(f"Successfully created new collection with {len(collection_data)} cards")
-                    return True
-            except Exception as e:
-                print(f"Error saving collection to Firestore: {str(e)}")
-                import traceback
-                print(f"Traceback: {traceback.format_exc()}")
-                return False
+            # Delete all existing cards
+            existing_cards = cards_ref.get()
+            for card in existing_cards:
+                card.reference.delete()
+            
+            # Add all new cards
+            for card in cards:
+                # Generate a unique ID for the card based on its attributes
+                card_id = f"{card.player_name}_{card.year}_{card.card_set}_{card.card_number}".replace(" ", "_").lower()
+                
+                # Add the card to the subcollection
+                cards_ref.document(card_id).set(card.to_dict())
+            
+            # Update the user's last_updated timestamp
+            user_ref = service.db.collection('users').document(uid)
+            user_ref.update({'last_updated': datetime.now().isoformat()})
+            
+            logger.info(f"Successfully saved {len(cards)} cards to collection")
+            return True
+            
         except Exception as e:
-            print(f"Error in save_user_collection: {str(e)}")
-            import traceback
-            print(f"Traceback: {traceback.format_exc()}")
+            logger.error(f"Error in save_user_collection: {str(e)}")
             return False
 
     @staticmethod
     def add_card_to_collection(uid: str, card: Card) -> bool:
-        """Add a single card to user's collection."""
+        """Add a card to the user's collection."""
         try:
-            user_ref = db.collection('users').document(uid)
-            user_ref.update({
-                'collection': firestore.ArrayUnion([card.to_dict()])
-            })
+            service = DatabaseService.get_instance()
+            if not service._ensure_db_connection():
+                logger.error("Database connection not available")
+                return False
+
+            # Get the user's cards subcollection reference
+            cards_ref = service.db.collection('users').document(uid).collection('cards')
+            
+            # Generate a unique ID for the card based on its attributes
+            card_id = f"{card.player_name}_{card.year}_{card.card_set}_{card.card_number}".replace(" ", "_").lower()
+            
+            # Convert card to dictionary and log the data
+            card_data = card.to_dict()
+            logger.info(f"Attempting to save card with ID: {card_id}")
+            logger.debug(f"Card data: {card_data}")
+            
+            # Add the card to the subcollection
+            cards_ref.document(card_id).set(card_data)
+            
+            # Update the user's last_updated timestamp
+            user_ref = service.db.collection('users').document(uid)
+            user_ref.update({'last_updated': datetime.now().isoformat()})
+            
+            logger.info(f"Successfully added card to collection: {card_id}")
             return True
+            
         except Exception as e:
-            print(f"Error adding card to collection: {str(e)}")
+            logger.error(f"Error in add_card_to_collection: {str(e)}")
+            logger.error(f"Card data that failed to save: {card.to_dict() if card else 'No card data'}")
+            import traceback
+            logger.error(f"Traceback: {traceback.format_exc()}")
             return False
 
     @staticmethod
-    def update_card_in_collection(uid: str, card: Card) -> bool:
-        """Update a card in user's collection."""
+    def update_card(uid: str, card: Card) -> bool:
+        """Update a card in the user's collection."""
         try:
-            user_ref = db.collection('users').document(uid)
-            user_doc = user_ref.get()
-            if user_doc.exists:
-                collection = user_doc.to_dict().get('collection', [])
-                updated_collection = []
-                for c in collection:
-                    if (c.get('player_name') == card.player_name and 
-                        c.get('year') == card.year and 
-                        c.get('card_set') == card.card_set and 
-                        c.get('card_number') == card.card_number):
-                        updated_collection.append(card.to_dict())
-                    else:
-                        updated_collection.append(c)
-                
-                user_ref.update({
-                    'collection': updated_collection
-                })
-                return True
-            return False
+            service = DatabaseService.get_instance()
+            if not service._ensure_db_connection():
+                logger.error("Database connection not available")
+                return False
+
+            # Get the user's cards subcollection reference
+            cards_ref = service.db.collection('users').document(uid).collection('cards')
+            
+            # Generate the card ID
+            card_id = f"{card.player_name}_{card.year}_{card.card_set}_{card.card_number}".replace(" ", "_").lower()
+            
+            # Update the card document
+            cards_ref.document(card_id).set(card.to_dict())
+            
+            # Update the user's last_updated timestamp
+            user_ref = service.db.collection('users').document(uid)
+            user_ref.update({'last_updated': datetime.now().isoformat()})
+            
+            logger.info(f"Successfully updated card: {card_id}")
+            return True
+            
         except Exception as e:
-            print(f"Error updating card in collection: {str(e)}")
+            logger.error(f"Error in update_card: {str(e)}")
             return False
 
     @staticmethod
-    def delete_card_from_collection(uid: str, card: Card) -> bool:
-        """Delete a card from user's collection."""
+    def delete_card(uid: str, card: Card) -> bool:
+        """Delete a card from the user's collection."""
         try:
-            user_ref = db.collection('users').document(uid)
-            user_doc = user_ref.get()
-            if user_doc.exists:
-                collection = user_doc.to_dict().get('collection', [])
-                updated_collection = [
-                    c for c in collection 
-                    if not (c.get('player_name') == card.player_name and 
-                           c.get('year') == card.year and 
-                           c.get('card_set') == card.card_set and 
-                           c.get('card_number') == card.card_number)
-                ]
-                
-                user_ref.update({
-                    'collection': updated_collection
-                })
-                return True
-            return False
+            service = DatabaseService.get_instance()
+            if not service._ensure_db_connection():
+                logger.error("Database connection not available")
+                return False
+
+            # Get the user's cards subcollection reference
+            cards_ref = service.db.collection('users').document(uid).collection('cards')
+            
+            # Generate the card ID
+            card_id = f"{card.player_name}_{card.year}_{card.card_set}_{card.card_number}".replace(" ", "_").lower()
+            
+            # Delete the card document
+            cards_ref.document(card_id).delete()
+            
+            # Update the user's last_updated timestamp
+            user_ref = service.db.collection('users').document(uid)
+            user_ref.update({'last_updated': datetime.now().isoformat()})
+            
+            logger.info(f"Successfully deleted card: {card_id}")
+            return True
+            
         except Exception as e:
-            print(f"Error deleting card from collection: {str(e)}")
+            logger.error(f"Error in delete_card: {str(e)}")
             return False
 
     @staticmethod
@@ -401,7 +328,7 @@ class DatabaseService:
                         'display_cases': serializable_cases,
                         'created_at': datetime.now().isoformat(),
                         'updated_at': datetime.now().isoformat(),
-                        'collection': [],  # Initialize empty collection
+                        'last_updated': datetime.now().isoformat(),
                         'preferences': {
                             'display_name': 'User',
                             'theme': 'light',
@@ -423,7 +350,8 @@ class DatabaseService:
                     # Update only the display_cases field
                     user_ref.update({
                         'display_cases': existing_cases,
-                        'updated_at': datetime.now().isoformat()
+                        'updated_at': datetime.now().isoformat(),
+                        'last_updated': datetime.now().isoformat()
                     })
                     print(f"Updated display cases for user {uid}")
                 
@@ -465,46 +393,162 @@ class DatabaseService:
     def save_display_cases(uid: str, display_cases: Dict) -> bool:
         """Save display cases to Firestore."""
         try:
-            # Validate and prepare display cases data
-            validated_cases = {}
+            # Process display cases to ensure they're serializable
+            processed_cases = {}
             for name, case in display_cases.items():
-                # Ensure all cards have valid photo data
-                valid_cards = []
-                for card in case.get('cards', []):
-                    if 'photo' in card and card['photo']:
-                        # Convert photo to string if needed
-                        if not isinstance(card['photo'], str):
-                            card['photo'] = str(card['photo'])
-                        valid_cards.append(card)
-                    else:
-                        print(f"[DEBUG] Skipping card {card.get('player_name', 'Unknown')} in display case {name} - no valid photo")
+                processed_case = {
+                    'name': str(case.get('name', '')),
+                    'description': str(case.get('description', '')),
+                    'tags': [str(tag) for tag in case.get('tags', [])],
+                    'created_date': str(case.get('created_date', datetime.now().isoformat())),
+                    'total_value': float(case.get('total_value', 0.0)),
+                    'cards': []
+                }
                 
-                # Only include display cases with valid cards
-                if valid_cards:
-                    validated_cases[name] = {
-                        'name': str(case.get('name', '')),
-                        'description': str(case.get('description', '')),
-                        'tags': [str(tag) for tag in case.get('tags', [])],
-                        'cards': valid_cards,
-                        'total_value': float(case.get('total_value', 0.0)),
-                        'created_date': str(case.get('created_date', datetime.now().isoformat()))
-                    }
-
-            if not validated_cases:
-                print("[ERROR] No valid display cases to save")
-                return False
-
+                # Process cards
+                for card in case.get('cards', []):
+                    processed_card = {}
+                    for key, value in card.items():
+                        if isinstance(value, (str, int, float, bool, list, dict, type(None))):
+                            processed_card[key] = value
+                        else:
+                            processed_card[key] = str(value)
+                    processed_case['cards'].append(processed_card)
+                
+                processed_cases[name] = processed_case
+            
             # Save to Firestore
             db.collection('users').document(uid).update({
-                'display_cases': validated_cases,
-                'updated_at': datetime.now().isoformat()
+                'display_cases': processed_cases,
+                'updated_at': datetime.now().isoformat(),
+                'last_updated': datetime.now().isoformat()
             })
             
-            print(f"[DEBUG] Successfully saved {len(validated_cases)} display cases")
             return True
             
         except Exception as e:
-            print(f"[ERROR] Failed to save display cases: {str(e)}")
+            print(f"Error saving display cases: {str(e)}")
+            import traceback
+            print(f"Traceback: {traceback.format_exc()}")
+            return False
+
+    def process_card_photo(self, photo_data: str) -> str:
+        """Process and compress card photo if needed."""
+        try:
+            if not photo_data:
+                return "https://placehold.co/300x400/e6e6e6/666666.png?text=No+Card+Image"
+            
+            if not (photo_data.startswith('data:image') or photo_data.startswith('http')):
+                return "https://placehold.co/300x400/e6e6e6/666666.png?text=No+Card+Image"
+            
+            # If it's a URL, return as is
+            if photo_data.startswith('http'):
+                return photo_data
+            
+            # Process base64 image
+            if photo_data.startswith('data:image'):
+                try:
+                    # Extract base64 data
+                    base64_part = photo_data.split(',')[1]
+                    img_data = base64.b64decode(base64_part)
+                    
+                    # Process image with PIL
+                    img = Image.open(io.BytesIO(img_data))
+                    
+                    # Convert to RGB if necessary
+                    if img.mode != 'RGB':
+                        img = img.convert('RGB')
+                    
+                    # Calculate new size maintaining aspect ratio
+                    max_width = 800
+                    max_height = 1000
+                    ratio = min(max_width/img.size[0], max_height/img.size[1])
+                    new_size = (int(img.size[0]*ratio), int(img.size[1]*ratio))
+                    img = img.resize(new_size, Image.LANCZOS)
+                    
+                    # Save with compression
+                    buffer = io.BytesIO()
+                    img.save(buffer, format='JPEG', quality=85, optimize=True)
+                    compressed_data = buffer.getvalue()
+                    
+                    # Check final size
+                    if len(compressed_data) > 1024 * 1024:  # If still over 1MB
+                        # Try more aggressive compression
+                        buffer = io.BytesIO()
+                        img.save(buffer, format='JPEG', quality=60, optimize=True)
+                        compressed_data = buffer.getvalue()
+                        
+                        if len(compressed_data) > 1024 * 1024:
+                            print(f"Warning: Image still too large after compression ({len(compressed_data)/1024:.1f}KB)")
+                            return "https://placehold.co/300x400/e6e6e6/666666.png?text=Image+Too+Large"
+                    
+                    # Convert back to base64
+                    encoded_image = base64.b64encode(compressed_data).decode()
+                    return f"data:image/jpeg;base64,{encoded_image}"
+                    
+                except Exception as e:
+                    print(f"Error processing image: {str(e)}")
+                    return "https://placehold.co/300x400/e6e6e6/666666.png?text=Image+Processing+Error"
+            
+            return "https://placehold.co/300x400/e6e6e6/666666.png?text=Invalid+Image+Format"
+            
+        except Exception as e:
+            print(f"Error in process_card_photo: {str(e)}")
+            return "https://placehold.co/300x400/e6e6e6/666666.png?text=Error+Processing+Image"
+
+    @staticmethod
+    def load_user_collection(uid: str) -> List[Card]:
+        """Load user's card collection from Firestore."""
+        try:
+            # Get the user's cards subcollection reference
+            cards_ref = db.collection('users').document(uid).collection('cards')
+            
+            # Get all card documents
+            card_docs = cards_ref.get()
+            
+            # Convert documents to Card objects
+            cards = []
+            for doc in card_docs:
+                try:
+                    card_data = doc.to_dict()
+                    card = Card.from_dict(card_data)
+                    cards.append(card)
+                except Exception as e:
+                    print(f"Error converting card data to Card object: {str(e)}")
+                    print(f"Card data: {card_data}")
+                    continue
+            
+            print(f"Successfully loaded {len(cards)} cards from collection")
+            return cards
+            
+        except Exception as e:
+            print(f"Error in load_user_collection: {str(e)}")
+            import traceback
+            print(f"Traceback: {traceback.format_exc()}")
+            return []
+
+    @staticmethod
+    def remove_card_from_collection(uid: str, card: Card) -> bool:
+        """Remove a card from the user's collection."""
+        try:
+            # Get the user's cards subcollection reference
+            cards_ref = db.collection('users').document(uid).collection('cards')
+            
+            # Generate the card ID
+            card_id = f"{card.player_name}_{card.year}_{card.card_set}_{card.card_number}".replace(" ", "_").lower()
+            
+            # Delete the card document
+            cards_ref.document(card_id).delete()
+            
+            # Update the user's last_updated timestamp
+            user_ref = db.collection('users').document(uid)
+            user_ref.update({'last_updated': datetime.now().isoformat()})
+            
+            print(f"Successfully removed card from collection: {card_id}")
+            return True
+            
+        except Exception as e:
+            print(f"Error in remove_card_from_collection: {str(e)}")
             import traceback
             print(f"Traceback: {traceback.format_exc()}")
             return False 

@@ -1,5 +1,6 @@
 from typing import Dict, List, Any
 import streamlit as st
+from modules.ui.indicators import RecommendationIndicator
 
 class GradingAnalyzer:
     @staticmethod
@@ -60,18 +61,11 @@ class GradingAnalyzer:
         psa10_roi = (psa10_profit / break_even * 100) if psa10_profit and break_even > 0 else None
         
         # Generate recommendation
-        recommendation = "DON'T GRADE"
-        recommendation_color = "warning"
-        recommendation_icon = "🟡"
-        
-        if psa10_profit and psa10_profit > total_grading_cost * 2:
-            recommendation = "GRADE IT!"
-            recommendation_color = "success"
-            recommendation_icon = "🟢"
-        elif psa9_profit and psa9_profit > total_grading_cost:
-            recommendation = "Consider Grading"
-            recommendation_color = "info"
-            recommendation_icon = "🔵"
+        recommendation = RecommendationIndicator.get_grading_recommendation(
+            psa10_profit,
+            psa9_profit,
+            total_grading_cost
+        )
         
         return {
             'current_value': current_value,
@@ -87,7 +81,7 @@ class GradingAnalyzer:
             'psa10_profit': psa10_profit,
             'psa9_roi': psa9_roi,
             'psa10_roi': psa10_roi,
-            'recommendation': recommendation,
-            'recommendation_color': recommendation_color,
-            'recommendation_icon': recommendation_icon
+            'recommendation': recommendation['recommendation'],
+            'recommendation_color': recommendation['color'],
+            'recommendation_icon': recommendation['icon']
         } 

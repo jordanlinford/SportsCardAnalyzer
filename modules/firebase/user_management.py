@@ -1,10 +1,14 @@
 from typing import Dict, Optional, List
 from firebase_admin import auth as admin_auth
 from firebase_admin import firestore
-from .firebase_init import get_firebase_app, get_firestore_client, get_pyrebase_auth
+from modules.core.firebase_manager import FirebaseManager
 import requests.exceptions
 import firebase_admin
 import traceback
+import streamlit as st
+import logging
+
+logger = logging.getLogger(__name__)
 
 class UserManager:
     @staticmethod
@@ -21,43 +25,43 @@ class UserManager:
             Dict with success status and user data or error message
         """
         try:
-            print("Starting user creation process...")
+            logger.info("Starting user creation process...")
             
             # Get Firebase Admin SDK app
-            print("Getting Firebase Admin SDK app...")
-            app = get_firebase_app()
+            logger.info("Getting Firebase Admin SDK app...")
+            app = FirebaseManager.get_firebase_app()
             if app is None:
-                print("ERROR: Firebase Admin SDK app is not initialized")
+                logger.error("Firebase Admin SDK app is not initialized")
                 return {'success': False, 'error': "Firebase Admin SDK not initialized"}
             
-            print(f"Using Firebase Admin SDK app: {app.name}")
+            logger.info(f"Using Firebase Admin SDK app: {app.name}")
             
             # Get Firestore client
-            print("Getting Firestore client...")
-            firestore_client = get_firestore_client()
+            logger.info("Getting Firestore client...")
+            firestore_client = FirebaseManager.get_firestore_client()
             if firestore_client is None:
-                print("ERROR: Firestore client is not initialized")
+                logger.error("Firestore client is not initialized")
                 return {'success': False, 'error': "Firestore client not initialized"}
             
-            print("Firestore client initialized")
+            logger.info("Firestore client initialized")
             
-            # Get Pyrebase auth
-            print("Getting Pyrebase auth...")
-            pb_auth = get_pyrebase_auth()
-            if pb_auth is None:
-                print("ERROR: Pyrebase auth is not initialized")
+            # Get auth
+            logger.info("Getting auth...")
+            auth = FirebaseManager.get_auth()
+            if auth is None:
+                logger.error("Auth is not initialized")
                 return {'success': False, 'error': "Authentication service not initialized"}
             
-            print("Pyrebase auth initialized")
+            logger.info("Auth initialized")
             
             # Create user with Firebase Admin SDK
-            print(f"Creating user with email: {email}")
+            logger.info(f"Creating user with email: {email}")
             user = admin_auth.create_user(
                 email=email,
                 password=password,
                 display_name=display_name
             )
-            print(f"User created with UID: {user.uid}")
+            logger.info(f"User created with UID: {user.uid}")
             
             # Initialize default preferences
             default_preferences = {
@@ -83,20 +87,20 @@ class UserManager:
                 'preferences': default_preferences
             }
             
-            print(f"Creating user document in Firestore for UID: {user.uid}")
+            logger.info(f"Creating user document in Firestore for UID: {user.uid}")
             firestore_client.collection('users').document(user.uid).set(user_data)
-            print("User document created successfully")
+            logger.info("User document created successfully")
             
             # Sign in the user to get the auth token
-            print("Signing in user to get auth token...")
+            logger.info("Signing in user to get auth token...")
             try:
-                # Use Pyrebase authentication
-                auth_user = pb_auth.sign_in_with_email_and_password(email, password)
-                print("User signed in successfully with Pyrebase")
+                # Use Firebase authentication
+                auth_user = auth.sign_in_with_email_and_password(email, password)
+                logger.info("User signed in successfully")
             except Exception as auth_error:
-                print(f"Error signing in with Pyrebase: {str(auth_error)}")
-                print(f"Traceback: {traceback.format_exc()}")
-                # Continue without the token if Pyrebase auth fails
+                logger.error(f"Error signing in: {str(auth_error)}")
+                logger.error(f"Traceback: {traceback.format_exc()}")
+                # Continue without the token if auth fails
                 auth_user = {'idToken': None}
             
             return {
@@ -107,7 +111,7 @@ class UserManager:
             }
         except requests.exceptions.HTTPError as e:
             error_message = str(e)
-            print(f"HTTP Error during user creation: {error_message}")
+            logger.error(f"HTTP Error during user creation: {error_message}")
             if "EMAIL_EXISTS" in error_message:
                 return {'success': False, 'error': "Email already exists"}
             elif "WEAK_PASSWORD" in error_message:
@@ -117,8 +121,8 @@ class UserManager:
             else:
                 return {'success': False, 'error': f"Authentication error: {str(e)}"}
         except Exception as e:
-            print(f"Exception during user creation: {str(e)}")
-            print(f"Traceback: {traceback.format_exc()}")
+            logger.error(f"Exception during user creation: {str(e)}")
+            logger.error(f"Traceback: {traceback.format_exc()}")
             return {'success': False, 'error': str(e)}
     
     @staticmethod
@@ -134,40 +138,40 @@ class UserManager:
             Dict with success status and user data or error message
         """
         try:
-            # Get Pyrebase auth
-            print("Getting Pyrebase auth...")
-            pb_auth = get_pyrebase_auth()
-            if pb_auth is None:
-                print("ERROR: Pyrebase auth is not initialized")
+            # Get auth
+            logger.info("Getting auth...")
+            auth = FirebaseManager.get_auth()
+            if auth is None:
+                logger.error("Auth is not initialized")
                 return {'success': False, 'error': "Authentication service not initialized"}
             
-            print("Pyrebase auth initialized")
+            logger.info("Auth initialized")
             
             # Get Firestore client
-            print("Getting Firestore client...")
-            firestore_client = get_firestore_client()
+            logger.info("Getting Firestore client...")
+            firestore_client = FirebaseManager.get_firestore_client()
             if firestore_client is None:
-                print("ERROR: Firestore client is not initialized")
+                logger.error("Firestore client is not initialized")
                 return {'success': False, 'error': "Firestore client not initialized"}
             
-            print("Firestore client initialized")
+            logger.info("Firestore client initialized")
             
-            # Sign in with Pyrebase
-            print(f"Signing in user with email: {email}")
+            # Sign in with Firebase
+            logger.info(f"Signing in user with email: {email}")
             try:
-                auth_user = pb_auth.sign_in_with_email_and_password(email, password)
-                print("User signed in successfully with Pyrebase")
+                auth_user = auth.sign_in_with_email_and_password(email, password)
+                logger.info("User signed in successfully")
                 
                 # Get user data from Firestore
-                print(f"Getting user data from Firestore for UID: {auth_user['localId']}")
+                logger.info(f"Getting user data from Firestore for UID: {auth_user['localId']}")
                 user_doc = firestore_client.collection('users').document(auth_user['localId']).get()
                 
                 if not user_doc.exists:
-                    print(f"User document not found for UID: {auth_user['localId']}")
+                    logger.warning(f"User document not found for UID: {auth_user['localId']}")
                     return {'success': False, 'error': "User data not found"}
                 
                 user_data = user_doc.to_dict()
-                print("User data retrieved successfully")
+                logger.info("User data retrieved successfully")
                 
                 return {
                     'success': True,
@@ -178,7 +182,7 @@ class UserManager:
                 
             except requests.exceptions.HTTPError as e:
                 error_message = str(e)
-                print(f"HTTP Error during sign in: {error_message}")
+                logger.error(f"HTTP Error during sign in: {error_message}")
                 if "EMAIL_NOT_FOUND" in error_message:
                     return {'success': False, 'error': "Email not found"}
                 elif "INVALID_PASSWORD" in error_message:
@@ -188,13 +192,13 @@ class UserManager:
                 else:
                     return {'success': False, 'error': f"Authentication error: {str(e)}"}
             except Exception as e:
-                print(f"Error during sign in: {str(e)}")
-                print(f"Traceback: {traceback.format_exc()}")
+                logger.error(f"Error during sign in: {str(e)}")
+                logger.error(f"Traceback: {traceback.format_exc()}")
                 return {'success': False, 'error': f"Sign in failed: {str(e)}"}
                 
         except Exception as e:
-            print(f"Exception during sign in: {str(e)}")
-            print(f"Traceback: {traceback.format_exc()}")
+            logger.error(f"Exception during sign in: {str(e)}")
+            logger.error(f"Traceback: {traceback.format_exc()}")
             return {'success': False, 'error': str(e)}
     
     @staticmethod
@@ -209,20 +213,21 @@ class UserManager:
             Dict with user data or None if not found
         """
         try:
-            firestore_client = get_firestore_client()
-            if firestore_client is None:
-                print("ERROR: Firestore client is not initialized")
+            # Get Firestore client
+            firestore_client = FirebaseManager.get_firestore_client()
+            if not firestore_client:
+                logger.error("Firestore client not initialized")
                 return None
-                
+            
+            # Get user document
             user_doc = firestore_client.collection('users').document(uid).get()
             if not user_doc.exists:
-                print(f"User document not found for UID: {uid}")
+                logger.warning(f"No user data found for uid: {uid}")
                 return None
-                
+            
             return user_doc.to_dict()
         except Exception as e:
-            print(f"Error getting user data: {str(e)}")
-            print(f"Traceback: {traceback.format_exc()}")
+            logger.error(f"Error getting user data: {str(e)}")
             return None
     
     @staticmethod
@@ -238,11 +243,12 @@ class UserManager:
             Dict with success status and error message if any
         """
         try:
-            firestore_client = get_firestore_client()
-            if firestore_client is None:
-                print("ERROR: Firestore client is not initialized")
+            # Get Firestore client
+            firestore_client = FirebaseManager.get_firestore_client()
+            if not firestore_client:
+                logger.error("Firestore client not initialized")
                 return {'success': False, 'error': "Firestore client not initialized"}
-                
+            
             # Ensure numeric values are properly formatted
             formatted_preferences = {
                 'defaultGradingCost': float(preferences.get('defaultGradingCost', 0)),
@@ -255,11 +261,11 @@ class UserManager:
                 'preferences': formatted_preferences
             })
             
-            print(f"Updated preferences for user {uid}: {formatted_preferences}")
+            logger.info(f"Updated preferences for user {uid}: {formatted_preferences}")
             return {'success': True}
         except Exception as e:
-            print(f"Error updating user preferences: {str(e)}")
-            print(f"Traceback: {traceback.format_exc()}")
+            logger.error(f"Error updating user preferences: {str(e)}")
+            logger.error(f"Traceback: {traceback.format_exc()}")
             return {'success': False, 'error': str(e)}
     
     @staticmethod
@@ -275,11 +281,12 @@ class UserManager:
             Dict with success status and error message if any
         """
         try:
-            firestore_client = get_firestore_client()
-            if firestore_client is None:
-                print("ERROR: Firestore client is not initialized")
+            # Get Firestore client
+            firestore_client = FirebaseManager.get_firestore_client()
+            if not firestore_client:
+                logger.error("Firestore client not initialized")
                 return {'success': False, 'error': "Firestore client not initialized"}
-                
+            
             # Create a new list for processed items
             processed_data = []
             
@@ -308,10 +315,11 @@ class UserManager:
                 'collection': processed_data
             }, merge=True)
             
+            logger.info("Collection saved successfully")
             return {'success': True}
         except Exception as e:
-            print(f"Error saving collection: {str(e)}")
-            print(f"Traceback: {traceback.format_exc()}")
+            logger.error(f"Error saving collection: {str(e)}")
+            logger.error(f"Traceback: {traceback.format_exc()}")
             return {'success': False, 'error': str(e)}
     
     @staticmethod
@@ -327,11 +335,12 @@ class UserManager:
             Dict with success status and error message if any
         """
         try:
-            firestore_client = get_firestore_client()
-            if firestore_client is None:
-                print("ERROR: Firestore client is not initialized")
+            # Get Firestore client
+            firestore_client = FirebaseManager.get_firestore_client()
+            if not firestore_client:
+                logger.error("Firestore client not initialized")
                 return {'success': False, 'error': "Firestore client not initialized"}
-                
+            
             # Ensure card_data contains only serializable values
             for key, value in card_data.items():
                 if isinstance(value, (dict, list)):
@@ -343,10 +352,11 @@ class UserManager:
             user_ref.update({
                 'savedCards': firestore.ArrayUnion([card_data])
             })
+            logger.info("Card saved successfully")
             return {'success': True}
         except Exception as e:
-            print(f"Error saving card: {str(e)}")
-            print(f"Traceback: {traceback.format_exc()}")
+            logger.error(f"Error saving card: {str(e)}")
+            logger.error(f"Traceback: {traceback.format_exc()}")
             return {'success': False, 'error': str(e)}
     
     @staticmethod
@@ -362,11 +372,12 @@ class UserManager:
             Dict with success status and error message if any
         """
         try:
-            firestore_client = get_firestore_client()
-            if firestore_client is None:
-                print("ERROR: Firestore client is not initialized")
+            # Get Firestore client
+            firestore_client = FirebaseManager.get_firestore_client()
+            if not firestore_client:
+                logger.error("Firestore client not initialized")
                 return {'success': False, 'error': "Firestore client not initialized"}
-                
+            
             # Ensure trade_data contains only serializable values
             for key, value in trade_data.items():
                 if isinstance(value, (dict, list)):
@@ -378,8 +389,105 @@ class UserManager:
             user_ref.update({
                 'savedTrades': firestore.ArrayUnion([trade_data])
             })
+            logger.info("Trade saved successfully")
             return {'success': True}
         except Exception as e:
-            print(f"Error saving trade: {str(e)}")
-            print(f"Traceback: {traceback.format_exc()}")
-            return {'success': False, 'error': str(e)} 
+            logger.error(f"Error saving trade: {str(e)}")
+            logger.error(f"Traceback: {traceback.format_exc()}")
+            return {'success': False, 'error': str(e)}
+
+def update_user_data(uid, data):
+    """Update user data in Firestore."""
+    try:
+        # Get Firestore client
+        firestore_client = FirebaseManager.get_firestore_client()
+        if not firestore_client:
+            logger.error("Firestore client not initialized")
+            return False
+        
+        # Update user document
+        firestore_client.collection('users').document(uid).update(data)
+        return True
+        
+    except Exception as e:
+        logger.error(f"Error updating user data: {str(e)}")
+        return False
+
+def create_user_data(uid, data):
+    """Create user data in Firestore."""
+    try:
+        # Get Firestore client
+        firestore_client = FirebaseManager.get_firestore_client()
+        if not firestore_client:
+            logger.error("Firestore client not initialized")
+            return False
+        
+        # Create user document
+        firestore_client.collection('users').document(uid).set(data)
+        return True
+        
+    except Exception as e:
+        logger.error(f"Error creating user data: {str(e)}")
+        return False
+
+def delete_user_data(uid):
+    """Delete user data from Firestore."""
+    try:
+        # Get Firestore client
+        firestore_client = FirebaseManager.get_firestore_client()
+        if not firestore_client:
+            logger.error("Firestore client not initialized")
+            return False
+        
+        # Delete user document
+        firestore_client.collection('users').document(uid).delete()
+        return True
+        
+    except Exception as e:
+        logger.error(f"Error deleting user data: {str(e)}")
+        return False
+
+def get_user_collection(uid):
+    """Get user's collection from Firestore."""
+    try:
+        # Get Firestore client
+        firestore_client = FirebaseManager.get_firestore_client()
+        if not firestore_client:
+            logger.error("Firestore client not initialized")
+            return None
+        
+        # Get user document
+        user_doc = firestore_client.collection('users').document(uid).get()
+        if not user_doc.exists:
+            logger.warning(f"No user data found for uid: {uid}")
+            return None
+        
+        user_data = user_doc.to_dict()
+        if 'collection' not in user_data:
+            logger.info(f"No collection found for user: {uid}")
+            return []
+        
+        return user_data['collection']
+        
+    except Exception as e:
+        logger.error(f"Error getting user collection: {str(e)}")
+        return None
+
+def update_user_collection(uid, collection):
+    """Update user's collection in Firestore."""
+    try:
+        # Get Firestore client
+        firestore_client = FirebaseManager.get_firestore_client()
+        if not firestore_client:
+            logger.error("Firestore client not initialized")
+            return False
+        
+        # Update user document
+        firestore_client.collection('users').document(uid).update({
+            'collection': collection
+        })
+        return True
+        
+    except Exception as e:
+        logger.error(f"Error updating user collection: {str(e)}")
+        return False 

@@ -14,11 +14,12 @@ from modules.ui.components import CardDisplay
 import base64
 import requests
 import re
-from modules.firebase.config import db
 import os
 from modules.database.service import DatabaseService
 from modules.database.models import Card, CardCondition
 from typing import List, Dict, Any, Union
+from modules.ui.theme.theme_manager import ThemeManager
+from modules.ui.branding import BrandingComponent
 
 def get_score_color(score):
     """Return color based on score value"""
@@ -225,7 +226,9 @@ def add_to_collection(card_data, market_data):
                 variation = st.text_input("Variation", value=variation)
                 condition = st.selectbox(
                     "Condition",
-                    ["Raw", "PSA 10", "PSA 9", "SGC 10", "SGC 9.5", "SGC 9"],
+                    ["Raw", "PSA 10", "PSA 9", "PSA 8", "PSA 7", "PSA 6", 
+                     "PSA 5", "PSA 4", "PSA 3", "PSA 2", "PSA 1",
+                     "SGC 10", "SGC 9.5", "SGC 9"],
                     index=0
                 )
             
@@ -435,14 +438,23 @@ def display_market_analysis(card_data, market_data):
     # Sort by date in ascending order for proper trend display
     df = df.sort_values('date', ascending=True)
     
-    # Display the sales log
-    display_sales_log(df)
+    # Calculate price statistics with outlier removal
+    def remove_outliers(series):
+        Q1 = series.quantile(0.25)
+        Q3 = series.quantile(0.75)
+        IQR = Q3 - Q1
+        lower_bound = Q1 - 1.5 * IQR
+        upper_bound = Q3 + 1.5 * IQR
+        return series[(series >= lower_bound) & (series <= upper_bound)]
     
-    # Calculate metrics
-    median_price = df['price'].median()
+    # Remove outliers from price data
+    clean_prices = remove_outliers(df['price'])
+    
+    # Calculate metrics with cleaned data
+    median_price = clean_prices.median()
     last_7_sales = df.tail(7)  # Get last 7 sales since we're sorted ascending
-    avg_sell_price = last_7_sales['price'].mean()
-    price_std = df['price'].std()
+    avg_sell_price = clean_prices.mean()
+    price_std = clean_prices.std()
     volatility_score = min((price_std / avg_sell_price) * 10, 10)
     
     # Calculate market health score
@@ -470,8 +482,8 @@ def display_market_analysis(card_data, market_data):
         'metrics': {
             'avg_price': avg_sell_price,
             'median_price': median_price,
-            'low_price': df['price'].min(),
-            'high_price': df['price'].max(),
+            'low_price': clean_prices.min(),
+            'high_price': clean_prices.max(),
             'liquidity_score': market_health_score,
             'volatility_score': volatility_score,
             'volume_score': min(sales_volume / 30 * 10, 10)
@@ -485,7 +497,14 @@ def display_market_analysis(card_data, market_data):
     if 'selected_variation' in st.session_state and st.session_state.selected_variation:
         selected_card = st.session_state.selected_variation['cards'][0] if st.session_state.selected_variation['cards'] else None
         if selected_card and selected_card.get('image_url'):
-            display_image(selected_card['image_url'])
+            # Create a container for the image with custom width
+            col1, col2, col3 = st.columns([1, 2, 1])
+            with col2:
+                st.image(selected_card['image_url'], 
+                        width=300,  # Set a fixed width that's 75% smaller than default
+                        use_container_width=False,
+                        output_format="JPEG",
+                        caption=selected_card.get('title', 'Card Image'))
     
     # Display market metrics
     st.markdown("### Market Metrics")
@@ -497,16 +516,30 @@ def display_market_analysis(card_data, market_data):
     - What a fair price might be
     """)
     
-    # Define color coding for scores
-    def get_score_color(score):
-        """Return color based on score value"""
-        if score >= 8:
-            return "#4CAF50"  # Green for strong scores
-        elif score >= 6:
-            return "#FFC107"  # Yellow for moderate scores
-        else:
-            return "#F44336"  # Red for weak scores
+    # First row - Price Statistics
+    st.markdown("#### Price Statistics")
+    price_col1, price_col2, price_col3 = st.columns(3)
+    with price_col1:
+        st.metric(
+            "Average Sale Price",
+            f"${avg_sell_price:.2f}",
+            help="The typical selling price based on recent sales (outliers removed)"
+        )
+    with price_col2:
+        st.metric(
+            "Highest Sale Price",
+            f"${clean_prices.max():.2f}",
+            help="The highest price this card has sold for (outliers removed)"
+        )
+    with price_col3:
+        st.metric(
+            "Lowest Sale Price",
+            f"${clean_prices.min():.2f}",
+            help="The lowest price this card has sold for (outliers removed)"
+        )
     
+    # Second row - Market Scores
+    st.markdown("#### Market Scores")
     col1, col2, col3, col4 = st.columns(4)
     with col1:
         st.markdown(f"""
@@ -554,11 +587,32 @@ def display_market_analysis(card_data, market_data):
         """, unsafe_allow_html=True)
     
     with col4:
-        st.metric(
-            "Average Sell Price",
-            f"${avg_sell_price:.2f}",
-            help="The typical selling price based on recent sales. Use this to gauge if you're getting a good deal."
-        )
+        st.markdown(f"""
+        <div style='text-align: center;'>
+            <h3 style='color: {get_score_color(market_health_score)};'>{market_health_score:.1f}/10</h3>
+            <p>Liquidity Score</p>
+        </div>
+        """, unsafe_allow_html=True)
+        st.markdown("""
+        <div style='font-size: 0.8em;'>
+            <p style='color: #4CAF50;'>7-10: High trading volume</p>
+            <p style='color: #FFC107;'>5-7: Moderate trading volume</p>
+            <p style='color: #F44336;'>Below 5: Low trading volume</p>
+        </div>
+        """, unsafe_allow_html=True)
+    
+    # Display outlier information
+    st.markdown("#### Data Quality")
+    total_sales = len(df)
+    outlier_count = len(df) - len(clean_prices)
+    outlier_percentage = (outlier_count / total_sales * 100) if total_sales > 0 else 0
+    
+    st.info(f"""
+    **Data Quality Note:**
+    - Total sales analyzed: {total_sales}
+    - Outliers removed: {outlier_count} ({outlier_percentage:.1f}%)
+    - Price statistics shown above exclude outliers to provide more accurate market insights
+    """)
     
     if df is not None and not df.empty:
         # Display historical price trend
@@ -708,9 +762,21 @@ def display_market_analysis(card_data, market_data):
             
             # Display profit calculator with the selected card data
             if selected_card_data:
+                # Determine if card is graded from title
+                title = selected_card_data.get('title', '').lower()
+                is_graded = any(grade in title for grade in ['psa', 'bgs', 'sgc'])
+                
                 # Add condition if missing
                 if 'condition' not in selected_card_data:
-                    selected_card_data['condition'] = 'raw'
+                    if is_graded:
+                        # Extract grade from title
+                        grade_match = re.search(r'(psa|bgs|sgc)\s*(\d+)', title)
+                        if grade_match:
+                            selected_card_data['condition'] = f"{grade_match.group(1).upper()} {grade_match.group(2)}"
+                        else:
+                            selected_card_data['condition'] = 'graded'
+                    else:
+                        selected_card_data['condition'] = 'raw'
                 
                 CardDisplay.display_profit_calculator(selected_card_data, market_data)
             
@@ -1001,11 +1067,10 @@ def load_collection_from_firebase():
         ])
     
     try:
-        user_doc = db.collection('users').document(st.session_state.uid).get()
-        if user_doc.exists:
-            user_data = user_doc.to_dict()
-            if 'collection' in user_data:
-                return pd.DataFrame(user_data['collection'])
+        # Get user data using DatabaseService
+        user_data = DatabaseService.get_user_data(st.session_state.uid)
+        if user_data and 'collection' in user_data:
+            return pd.DataFrame(user_data['collection'])
     except Exception as e:
         st.error(f"Error loading collection: {str(e)}")
     
@@ -1016,30 +1081,26 @@ def load_collection_from_firebase():
     ])
 
 def export_collection_backup():
-    """Export collection backup to desktop"""
+    """Export collection backup as a downloadable CSV file"""
     try:
         # Check if collection exists and has data
         if not hasattr(st.session_state, 'collection') or st.session_state.collection.empty:
             st.error("No collection data available to backup.")
             return False, "No collection data available"
-            
-        # Use specific backup name
-        backup_filename = "APRIL 2 BACKUP.csv"
         
-        # Get desktop path
-        desktop_path = os.path.expanduser("~/Desktop")
-        backup_path = os.path.join(desktop_path, backup_filename)
+        # Convert collection to CSV
+        csv = st.session_state.collection.to_csv(index=False)
         
-        # Export collection to CSV
-        st.session_state.collection.to_csv(backup_path, index=False)
+        # Create download button
+        st.download_button(
+            label="Download Collection Backup",
+            data=csv,
+            file_name="collection_backup.csv",
+            mime="text/csv",
+            use_container_width=True
+        )
         
-        # Verify the file was created
-        if os.path.exists(backup_path):
-            st.success(f"Backup file created successfully at: {backup_path}")
-            return True, backup_path
-        else:
-            st.error("Backup file was not created successfully.")
-            return False, "File creation failed"
+        return True, "Download ready"
             
     except Exception as e:
         st.error(f"Error creating backup: {str(e)}")
@@ -1054,7 +1115,8 @@ def display_search_form():
         card_number = st.text_input("Card Number")
         variation = st.text_input("Variation")
         condition = st.selectbox("Condition", [
-            "Raw", "PSA 10", "PSA 9", 
+            "Raw", "PSA 10", "PSA 9", "PSA 8", "PSA 7", "PSA 6", 
+            "PSA 5", "PSA 4", "PSA 3", "PSA 2", "PSA 1",
             "SGC 10", "SGC 9.5", "SGC 9"
         ])
         
@@ -1212,7 +1274,7 @@ def main():
     
     # If user is not logged in, redirect to login page
     if not st.session_state.user:
-        st.switch_page("login")
+        st.switch_page("pages/0_login.py")
     
     # Get user preferences with defaults
     user_preferences = st.session_state.preferences or {
@@ -1227,20 +1289,36 @@ def main():
         'collection_stats': True
     }
     
+    # Sidebar
+    with st.sidebar:
+        # Sidebar header with branding
+        st.markdown('<div class="logo-container">', unsafe_allow_html=True)
+        BrandingComponent.display_horizontal_logo()
+        st.markdown('</div>', unsafe_allow_html=True)
+        
+        # Logout button
+        if st.button("Logout", type="primary"):
+            st.session_state.user = None
+            st.session_state.uid = None
+            st.rerun()
+    
     st.title("Market Analysis")
     
     # Initialize session state
     init_session_state()
     
-    # Add backup button in the top right
-    col1, col2, col3 = st.columns([2, 1, 1])
-    with col3:
-        if st.button("Backup Collection", use_container_width=True):
-            success, result = export_collection_backup()
-            if success:
-                st.success(f"Collection backup created successfully!\nSaved to: {result}")
-            else:
-                st.error(f"Failed to create backup: {result}")
+    # Add billing section
+    with ThemeManager.styled_card():
+        st.subheader("Billing")
+        st.info("💳 Billing management coming soon!")
+
+        # Placeholder for future billing features
+        st.markdown('''
+        **Coming Soon:**
+        - Subscription management
+        - Payment history
+        - Billing preferences
+        ''')
     
     # Initialize analyzers
     scraper = EbayInterface()

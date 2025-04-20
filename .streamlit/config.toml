@@ -1,0 +1,21 @@
+[experimental]
+disableUVI = true
+
+[theme]
+base="light"
+primaryColor="#0077b6"
+backgroundColor="#ffffff"
+secondaryBackgroundColor="#f0f2f6"
+textColor="#262730"
+font="sans serif"
+
+[server]
+enableCORS=true
+enableXsrfProtection=true
+maxUploadSize = 200
+
+[browser]
+gatherUsageStats = false
+
+[client]
+showErrorDetails = true

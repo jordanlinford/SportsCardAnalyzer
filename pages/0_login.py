@@ -1,58 +1,40 @@
 import streamlit as st
-from modules.firebase.firebase_init import initialize_all, get_firestore_client, get_pyrebase_auth
-from modules.firebase.user_management import UserManager
-import traceback
 import json
-import webbrowser
 import time
+import traceback
+import streamlit_cookies_manager
+from modules.core.firebase_manager import FirebaseManager
+from modules.ui.theme.theme_manager import ThemeManager
+from modules.ui.branding import BrandingComponent
+import webbrowser
 import threading
 
-# Configure the page
-st.set_page_config(
-    page_title="Login - Sports Card Analyzer Pro",
-    page_icon="🔑",
-    layout="centered"
-)
+# Initialize debug mode in session state first
+if 'debug_mode' not in st.session_state:
+    st.session_state.debug_mode = False
+
+# Apply theme and branding styles
+ThemeManager.apply_theme_styles()
+BrandingComponent.add_branding_styles()
 
 def initialize_firebase():
-    """
-    Initialize Firebase components and return the auth instance.
-    """
+    """Initialize Firebase components."""
     try:
-        # Initialize all Firebase components
-        if not initialize_all():
-            st.error("Failed to initialize Firebase. Please try again later.")
-            return None
-            
-        # Get the auth instance
-        auth = get_pyrebase_auth()
-        if auth is None:
-            st.error("Failed to initialize authentication. Please try again later.")
-            return None
-            
-        return auth
+        FirebaseManager.initialize()
+        return True
     except Exception as e:
         st.error(f"Error initializing Firebase: {str(e)}")
-        print(f"Traceback: {traceback.format_exc()}")
-        return None
+        return False
 
 def load_user_preferences(uid):
-    """
-    Load user preferences from Firestore.
-    
-    Args:
-        uid: User's unique identifier
-        
-    Returns:
-        Dict with user preferences or None if not found
-    """
+    """Load user preferences from Firestore."""
     try:
-        firestore_client = get_firestore_client()
-        if firestore_client is None:
-            print("ERROR: Firestore client is not initialized")
+        users_collection = FirebaseManager.get_collection('users')
+        if not users_collection:
+            print("Failed to get users collection")
             return None
             
-        user_doc = firestore_client.collection('users').document(uid).get()
+        user_doc = users_collection.document(uid).get()
         if not user_doc.exists:
             print(f"User document not found for UID: {uid}")
             return None
@@ -63,6 +45,50 @@ def load_user_preferences(uid):
         print(f"Error loading user preferences: {str(e)}")
         print(f"Traceback: {traceback.format_exc()}")
         return None
+
+def save_auth_to_cookies(user_data, uid):
+    """Save authentication data to cookies."""
+    try:
+        cookies = streamlit_cookies_manager.CookieManager()
+        if cookies.ready():
+            cookies['user'] = json.dumps(user_data)
+            cookies['uid'] = uid
+            cookies['last_login'] = str(int(time.time()))
+            cookies.save()
+            return True
+    except Exception as e:
+        print(f"Error saving cookies: {str(e)}")
+    return False
+
+def restore_session_from_cookies():
+    """Restore session from cookies if available."""
+    try:
+        cookies = streamlit_cookies_manager.CookieManager()
+        if not cookies.ready():
+            return False
+            
+        user_cookie = cookies.get('user')
+        uid_cookie = cookies.get('uid')
+        last_login = cookies.get('last_login')
+        
+        if not all([user_cookie, uid_cookie, last_login]):
+            return False
+            
+        # Check if session is still valid (less than 7 days old)
+        if int(time.time()) - int(last_login) > 7 * 24 * 60 * 60:
+            return False
+            
+        # Restore session
+        st.session_state.user = json.loads(user_cookie)
+        st.session_state.uid = uid_cookie
+        st.session_state.preferences = load_user_preferences(uid_cookie)
+        
+        # Refresh cookies
+        save_auth_to_cookies(st.session_state.user, st.session_state.uid)
+        return True
+    except Exception as e:
+        print(f"Error restoring session: {str(e)}")
+        return False
 
 def handle_auth_error(e):
     """
@@ -93,8 +119,6 @@ def handle_auth_error(e):
         return f"An error occurred: {str(e)}"
 
 def main():
-    st.title("Sports Card Analyzer Pro")
-    
     # Initialize session state
     if 'user' not in st.session_state:
         st.session_state.user = None
@@ -106,124 +130,133 @@ def main():
         st.session_state.is_new_user = False
     if 'auth_window' not in st.session_state:
         st.session_state.auth_window = None
+    if 'cookies_checked' not in st.session_state:
+        st.session_state.cookies_checked = False
     
-    # Initialize Firebase
-    auth = initialize_firebase()
-    if auth is None:
-        return
-    
-    # Check if user is already logged in
-    if st.session_state.user is not None:
-        if st.session_state.is_new_user:
-            st.success("Welcome to Sports Card Analyzer Pro! Your account has been created successfully.")
-            st.write("You can now start managing your sports card collection.")
-            st.session_state.is_new_user = False  # Reset the flag
-        else:
-            st.success(f"Welcome back! You are currently logged in.")
+    # Sidebar
+    with st.sidebar:
+        st.markdown('<div class="logo-container">', unsafe_allow_html=True)
+        BrandingComponent.display_horizontal_logo()
+        st.markdown('</div>', unsafe_allow_html=True)
         
-        if st.button("Logout"):
+        st.checkbox("Debug Mode (Prevent Auto Login)", 
+                   value=st.session_state.debug_mode,
+                   key='debug_mode',
+                   on_change=lambda: st.rerun())
+        
+        if st.button("Clear Cookies"):
+            cookies = streamlit_cookies_manager.CookieManager()
+            if cookies.ready():
+                cookies['user'] = ''
+                cookies['uid'] = ''
+                cookies['last_login'] = ''
+                cookies.save()
             st.session_state.user = None
             st.session_state.preferences = None
             st.session_state.uid = None
             st.session_state.is_new_user = False
+            st.session_state.cookies_checked = False
             st.rerun()
+    
+    # Main content
+    st.title("Sign In to Sports Card Analyzer Pro")
+    
+    # Try to restore session from cookies if not in debug mode
+    if not st.session_state.debug_mode and not st.session_state.user and not st.session_state.cookies_checked:
+        if restore_session_from_cookies():
+            st.success(f"Welcome back, {st.session_state.user.get('displayName', 'User')}!")
+            st.info("Redirecting you to your dashboard...")
+            time.sleep(1)
+            st.switch_page("pages/0_Home.py")
+            return
+        st.session_state.cookies_checked = True
+    
+    # If user is logged in, redirect to dashboard
+    if st.session_state.user and st.session_state.uid:
+        st.success(f"Welcome back, {st.session_state.user.get('displayName', 'User')}!")
+        st.info("Redirecting you to your dashboard...")
+        time.sleep(1)
+        st.switch_page("pages/0_Home.py")
+        return
+    
+    # Initialize Firebase
+    if not initialize_firebase():
+        st.error("Unable to connect to authentication service. Please try again later.")
         return
     
     # Create tabs for login and signup
-    tab1, tab2 = st.tabs(["Login", "Sign Up"])
-    
-    # Add Google Sign-In button
-    st.markdown("---")
-    st.markdown("### Or sign in with")
-    if st.button("Sign in with Google", key="google_signin"):
-        try:
-            # Open Google sign-in page in a new browser window
-            auth_url = "https://sports-card-analyzer.web.app"  # Firebase Hosting URL
-            st.session_state.auth_window = webbrowser.open_new_tab(auth_url)
-            
-            # Show instructions to the user
-            st.info("Please complete the Google sign-in process in the browser window that just opened. Once signed in, return to this page.")
-            
-            # Create a placeholder for the status message
-            status_placeholder = st.empty()
-            
-            # Check for authentication response
-            if 'auth_response' in st.session_state:
-                response = st.session_state.auth_response
-                if response.get('type') == 'auth_success':
-                    try:
-                        # Verify the ID token
-                        user = auth.get_account_info(response['token'])
-                        if user:
-                            st.session_state.user = {
-                                'localId': response['user']['uid'],
-                                'email': response['user']['email'],
-                                'displayName': response['user']['displayName'],
-                                'idToken': response['token']
-                            }
-                            st.session_state.uid = response['user']['uid']
-                            st.session_state.preferences = load_user_preferences(response['user']['uid'])
-                            st.session_state.is_new_user = True
-                            status_placeholder.success("Google sign-in successful!")
-                            st.rerun()
-                    except Exception as e:
-                        status_placeholder.error(f"Error verifying authentication: {str(e)}")
-                else:
-                    status_placeholder.error("Authentication failed. Please try again.")
-                
-                # Clear the response
-                del st.session_state.auth_response
-        except Exception as e:
-            st.error(f"Google sign-in failed: {str(e)}")
+    tab1, tab2 = st.tabs(["Sign In", "Create Account"])
     
     with tab1:
-        st.subheader("Login")
-        email = st.text_input("Email", key="login_email")
-        password = st.text_input("Password", type="password", key="login_password")
+        st.header("Sign In to Your Account")
+        st.markdown("Enter your credentials to access your collection and analysis tools.")
         
-        if st.button("Login"):
-            if not email or not password:
-                st.error("Please enter both email and password")
-            else:
-                try:
-                    user = auth.sign_in_with_email_and_password(email, password)
-                    st.session_state.user = user
-                    st.session_state.uid = user['localId']
-                    st.session_state.preferences = load_user_preferences(user['localId'])
-                    st.session_state.is_new_user = False
-                    st.success("Login successful!")
-                    st.rerun()
-                except Exception as e:
-                    st.error(handle_auth_error(e))
-                
-    with tab2:
-        st.subheader("Sign Up")
-        new_email = st.text_input("Email", key="signup_email")
-        new_password = st.text_input("Password", type="password", key="signup_password")
-        confirm_password = st.text_input("Confirm Password", type="password", key="signup_confirm_password")
-        
-        if st.button("Sign Up"):
-            if not new_email or not new_password or not confirm_password:
-                st.error("Please fill in all fields")
-            elif new_password != confirm_password:
-                st.error("Passwords do not match")
-            elif len(new_password) < 6:
-                st.error("Password must be at least 6 characters long")
-            else:
-                try:
-                    # Try to sign in first to check if user exists
+        col1, col2 = st.columns([1, 1])
+        with col1:
+            email = st.text_input("Email Address", placeholder="your@email.com")
+            password = st.text_input("Password", type="password", placeholder="••••••••")
+            
+            if st.button("Sign In", type="primary", use_container_width=True):
+                with st.spinner("Signing in..."):
                     try:
-                        auth.sign_in_with_email_and_password(new_email, new_password)
-                        st.error("This email is already registered. Please try logging in instead.")
-                    except:
-                        # If sign in fails, create new user
-                        user = auth.create_user_with_email_and_password(new_email, new_password)
+                        firebase = FirebaseManager.get_instance()
+                        user = firebase.sign_in(email, password)
                         st.session_state.user = user
-                        st.session_state.uid = user['localId']
-                        st.session_state.preferences = load_user_preferences(user['localId'])
-                        st.session_state.is_new_user = True
-                        st.success("Sign up successful!")
+                        st.session_state.uid = user.get('localId')
+                        st.session_state.preferences = load_user_preferences(st.session_state.uid)
+                        
+                        # Save auth to cookies
+                        if save_auth_to_cookies(user, st.session_state.uid):
+                            st.success("Login successful! Redirecting...")
+                            time.sleep(1)
+                            st.switch_page("pages/0_Home.py")
+                        else:
+                            st.error("Login successful but failed to save session. Please try again.")
+                    except Exception as e:
+                        st.error(f"Login failed: {str(e)}")
+        
+        with col2:
+            st.markdown("### Or sign in with")
+            if st.button("Google", key="google_signin", use_container_width=True):
+                try:
+                    user = FirebaseManager.sign_in_with_google()
+                    st.session_state.user = user
+                    st.session_state.uid = user.get('localId')
+                    st.session_state.preferences = load_user_preferences(st.session_state.uid)
+                    st.session_state.is_new_user = True
+                    
+                    # Save to cookies
+                    if save_auth_to_cookies(user, st.session_state.uid):
+                        st.success("Google sign-in successful!")
                         st.rerun()
+                    else:
+                        st.error("Google sign-in successful but failed to save session. Please try again.")
+                except Exception as e:
+                    st.error(f"Google sign-in failed: {str(e)}")
+    
+    with tab2:
+        st.header("Create Your Account")
+        st.markdown("Join Sports Card Analyzer Pro to start managing your collection today.")
+        
+        email = st.text_input("Email Address", key="signup_email", placeholder="your@email.com")
+        password = st.text_input("Password", type="password", key="signup_password", placeholder="••••••••")
+        display_name = st.text_input("Display Name", key="signup_display_name", placeholder="Your Name")
+        
+        if st.button("Create Account", type="primary", use_container_width=True):
+            with st.spinner("Creating your account..."):
+                try:
+                    user = FirebaseManager.sign_up(email, password, display_name)
+                    st.session_state.user = user
+                    st.session_state.uid = user.get('localId')
+                    st.session_state.preferences = load_user_preferences(st.session_state.uid)
+                    st.session_state.is_new_user = True
+                    
+                    # Save to cookies
+                    if save_auth_to_cookies(user, st.session_state.uid):
+                        st.success("Account created successfully!")
+                        st.rerun()
+                    else:
+                        st.error("Account created successfully but failed to save session. Please try again.")
                 except Exception as e:
                     st.error(handle_auth_error(e))
 
