@@ -3,9 +3,124 @@ Unit tests for core functionality of the Sports Card Analyzer application.
 """
 
 import pytest
-from modules.core.error_handler import AppError, DatabaseError, AuthenticationError, ValidationError
-from config.feature_flags import is_feature_enabled, enable_feature, disable_feature
+from modules.core.error_handler import (
+    handle_error,
+    ValidationError,
+    DatabaseError,
+    AuthenticationError,
+    DisplayError,
+    validate_input,
+    log_error,
+    display_error_message
+)
+from config.feature_flags import FeatureFlags, is_feature_enabled, enable_feature, disable_feature
 from config.environment import Environment
+
+def test_handle_error():
+    """Test error handling decorator"""
+    
+    @handle_error
+    def test_func():
+        raise ValidationError("Test validation error")
+    
+    @handle_error
+    def test_func2():
+        raise DatabaseError("Test database error")
+    
+    @handle_error
+    def test_func3():
+        raise Exception("Test unexpected error")
+    
+    # Test validation error
+    result = test_func()
+    assert result is None
+    
+    # Test database error
+    result = test_func2()
+    assert result is None
+    
+    # Test unexpected error
+    result = test_func3()
+    assert result is None
+
+def test_validate_input():
+    """Test input validation"""
+    # Test None input
+    with pytest.raises(ValidationError):
+        validate_input(None)
+    
+    # Test valid input without required fields
+    assert validate_input({"test": "value"}) is True
+    
+    # Test valid input with required fields
+    assert validate_input(
+        {"field1": "value1", "field2": "value2"},
+        ["field1", "field2"]
+    ) is True
+    
+    # Test invalid input with required fields
+    with pytest.raises(ValidationError):
+        validate_input(
+            {"field1": "value1"},
+            ["field1", "field2"]
+        )
+
+def test_feature_flags():
+    """Test feature flag functionality"""
+    # Test core features
+    assert FeatureFlags.is_feature_enabled('basic_display') is True
+    assert FeatureFlags.is_feature_enabled('collection_management') is True
+    
+    # Test experimental features
+    assert FeatureFlags.is_feature_enabled('advanced_search') is False
+    assert FeatureFlags.is_feature_enabled('market_analysis') is False
+    
+    # Test unknown feature
+    assert FeatureFlags.is_feature_enabled('unknown_feature') is False
+
+def test_environment_settings():
+    """Test environment settings"""
+    # Test getting settings
+    assert Environment.get_setting('DEBUG_MODE') is not None
+    assert Environment.get_setting('CARDS_PER_ROW') is not None
+    
+    # Test UI settings
+    ui_settings = Environment.get_ui_settings()
+    assert 'cards_per_row' in ui_settings
+    assert 'max_image_size' in ui_settings
+    
+    # Test cache settings
+    cache_settings = Environment.get_cache_settings()
+    assert 'enabled' in cache_settings
+    assert 'ttl' in cache_settings
+
+def test_error_logging():
+    """Test error logging functionality"""
+    # Test log_error
+    try:
+        raise ValueError("Test error")
+    except Exception as e:
+        log_error(e, "Test context")
+    
+    # Test display_error_message
+    display_error_message("Test error message", "error")
+    display_error_message("Test warning message", "warning")
+    display_error_message("Test info message", "info")
+
+def test_environment_validation():
+    """Test environment validation"""
+    # Test configuration validation
+    assert Environment.validate_config() is True
+    
+    # Test getting Firebase config
+    firebase_config = Environment.get_firebase_config()
+    assert isinstance(firebase_config, dict)
+    
+    # Test getting database settings
+    db_settings = Environment.get_database_settings()
+    assert isinstance(db_settings, dict)
+    assert 'url' in db_settings
+    assert 'timeout' in db_settings
 
 def test_error_handling():
     """Test error handling functionality"""

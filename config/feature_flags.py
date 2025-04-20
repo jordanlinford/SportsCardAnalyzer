@@ -1,73 +1,94 @@
 """
-Feature flags configuration for the Sports Card Analyzer application.
-This file controls which features are enabled/disabled in the application.
+Feature flag configuration for safe feature management
 """
 
-# Core Features (Always Enabled)
-CORE_FEATURES = {
-    'authentication': True,
-    'collection_management': True,
-    'basic_display': True,
-    'firebase_integration': True
-}
+from typing import Dict, List
+import logging
 
-# Experimental Features (Can be toggled)
-EXPERIMENTAL_FEATURES = {
-    'advanced_analytics': False,
-    'market_analysis': False,
-    'card_grading': False,
-    'collection_sharing': False
-}
+logger = logging.getLogger(__name__)
 
-# Feature Dependencies
-FEATURE_DEPENDENCIES = {
-    'advanced_analytics': ['collection_management'],
-    'market_analysis': ['collection_management'],
-    'card_grading': ['collection_management'],
-    'collection_sharing': ['collection_management', 'authentication']
-}
-
-def is_feature_enabled(feature_name):
-    """
-    Check if a feature is enabled.
+class FeatureFlags:
+    """Manages feature flags for the application"""
     
-    Args:
-        feature_name (str): Name of the feature to check
+    # Core features that should always be enabled
+    CORE_FEATURES = {
+        'basic_display': True,
+        'collection_management': True,
+        'card_deletion': True,
+        'user_authentication': True
+    }
+    
+    # Experimental features that can be toggled
+    EXPERIMENTAL_FEATURES = {
+        'advanced_search': False,
+        'market_analysis': False,
+        'grading_suggestions': False,
+        'price_tracking': False
+    }
+    
+    # Feature dependencies
+    FEATURE_DEPENDENCIES = {
+        'market_analysis': ['basic_display'],
+        'grading_suggestions': ['market_analysis'],
+        'price_tracking': ['market_analysis']
+    }
+    
+    @staticmethod
+    def is_feature_enabled(feature_name: str) -> bool:
+        """Check if a feature is enabled"""
+        try:
+            # Check core features first
+            if feature_name in FeatureFlags.CORE_FEATURES:
+                return FeatureFlags.CORE_FEATURES[feature_name]
+            
+            # Check experimental features
+            if feature_name in FeatureFlags.EXPERIMENTAL_FEATURES:
+                # Check dependencies
+                if feature_name in FeatureFlags.FEATURE_DEPENDENCIES:
+                    for dependency in FeatureFlags.FEATURE_DEPENDENCIES[feature_name]:
+                        if not FeatureFlags.is_feature_enabled(dependency):
+                            logger.warning(f"Feature {feature_name} disabled due to missing dependency: {dependency}")
+                            return False
+                return FeatureFlags.EXPERIMENTAL_FEATURES[feature_name]
+            
+            logger.warning(f"Unknown feature: {feature_name}")
+            return False
+        except Exception as e:
+            logger.error(f"Error checking feature {feature_name}: {str(e)}")
+            return False
+    
+    @staticmethod
+    def get_enabled_features() -> List[str]:
+        """Get list of all enabled features"""
+        enabled_features = []
         
-    Returns:
-        bool: True if feature is enabled, False otherwise
-    """
-    # Check if it's a core feature
-    if feature_name in CORE_FEATURES:
-        return CORE_FEATURES[feature_name]
+        # Add core features
+        for feature, enabled in FeatureFlags.CORE_FEATURES.items():
+            if enabled:
+                enabled_features.append(feature)
+        
+        # Add experimental features
+        for feature, enabled in FeatureFlags.EXPERIMENTAL_FEATURES.items():
+            if enabled and FeatureFlags.is_feature_enabled(feature):
+                enabled_features.append(feature)
+        
+        return enabled_features
     
-    # Check if it's an experimental feature
-    if feature_name in EXPERIMENTAL_FEATURES:
-        # Check dependencies first
-        if feature_name in FEATURE_DEPENDENCIES:
-            for dependency in FEATURE_DEPENDENCIES[feature_name]:
-                if not is_feature_enabled(dependency):
-                    return False
-        return EXPERIMENTAL_FEATURES[feature_name]
-    
-    return False
-
-def enable_feature(feature_name):
-    """
-    Enable a feature if it's experimental.
-    
-    Args:
-        feature_name (str): Name of the feature to enable
-    """
-    if feature_name in EXPERIMENTAL_FEATURES:
-        EXPERIMENTAL_FEATURES[feature_name] = True
-
-def disable_feature(feature_name):
-    """
-    Disable a feature if it's experimental.
-    
-    Args:
-        feature_name (str): Name of the feature to disable
-    """
-    if feature_name in EXPERIMENTAL_FEATURES:
-        EXPERIMENTAL_FEATURES[feature_name] = False 
+    @staticmethod
+    def set_feature_state(feature_name: str, enabled: bool) -> bool:
+        """Set the state of a feature"""
+        try:
+            if feature_name in FeatureFlags.CORE_FEATURES:
+                logger.warning(f"Cannot modify core feature: {feature_name}")
+                return False
+            
+            if feature_name in FeatureFlags.EXPERIMENTAL_FEATURES:
+                FeatureFlags.EXPERIMENTAL_FEATURES[feature_name] = enabled
+                logger.info(f"Feature {feature_name} set to {enabled}")
+                return True
+            
+            logger.warning(f"Unknown feature: {feature_name}")
+            return False
+        except Exception as e:
+            logger.error(f"Error setting feature {feature_name}: {str(e)}")
+            return False 

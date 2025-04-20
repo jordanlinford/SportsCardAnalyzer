@@ -8,6 +8,9 @@ import logging
 import traceback
 from functools import wraps
 import time
+import functools
+from typing import Callable, Any
+import streamlit as st
 
 # Configure logging
 logging.basicConfig(
@@ -36,36 +39,44 @@ class ValidationError(AppError):
     """Data validation errors"""
     pass
 
-def handle_error(func):
+class DisplayError(Exception):
+    """Raised when display operations fail"""
+    pass
+
+def handle_error(func: Callable) -> Callable:
     """
     Decorator for consistent error handling
     
     Args:
-        func: Function to wrap with error handling
+        func: The function to wrap with error handling
         
     Returns:
-        Wrapped function with error handling
+        The wrapped function
     """
-    @wraps(func)
-    def wrapper(*args, **kwargs):
+    @functools.wraps(func)
+    def wrapper(*args, **kwargs) -> Any:
         try:
             return func(*args, **kwargs)
-        except AppError as e:
-            # Log application-specific errors
-            logger.error(f"Application error: {e.message}")
-            if Environment.DEBUG_MODE:
-                logger.error(f"Error details: {e.details}")
-            raise
+        except ValidationError as e:
+            logger.warning(f"Validation error in {func.__name__}: {str(e)}")
+            st.warning(str(e))
+            return None
+        except DatabaseError as e:
+            logger.error(f"Database error in {func.__name__}: {str(e)}")
+            st.error(f"Database error: {str(e)}")
+            return None
+        except AuthenticationError as e:
+            logger.error(f"Authentication error in {func.__name__}: {str(e)}")
+            st.error(f"Authentication error: {str(e)}")
+            return None
+        except DisplayError as e:
+            logger.error(f"Display error in {func.__name__}: {str(e)}")
+            st.error(f"Display error: {str(e)}")
+            return None
         except Exception as e:
-            # Log unexpected errors
-            logger.error(f"Unexpected error: {str(e)}")
-            if Environment.DEBUG_MODE:
-                logger.error(f"Traceback: {traceback.format_exc()}")
-            raise AppError(
-                "An unexpected error occurred",
-                error_code="UNEXPECTED_ERROR",
-                details=str(e)
-            )
+            logger.error(f"Unexpected error in {func.__name__}: {str(e)}")
+            st.error(f"An unexpected error occurred: {str(e)}")
+            return None
     return wrapper
 
 def retry_on_error(max_retries=None, delay=1):
@@ -99,25 +110,63 @@ def retry_on_error(max_retries=None, delay=1):
         return wrapper
     return decorator
 
-def log_error(error, context=None):
+def log_error(error: Exception, context: str = None) -> None:
     """
     Log an error with context
     
     Args:
-        error: The error to log
-        context: Additional context information
+        error: The exception to log
+        context: Additional context about the error
     """
-    error_message = str(error)
+    error_msg = str(error)
     if context:
-        error_message += f" | Context: {context}"
+        error_msg = f"{context}: {error_msg}"
     
-    logger.error(error_message)
-    if Environment.DEBUG_MODE:
-        logger.error(f"Traceback: {traceback.format_exc()}")
+    logger.error(error_msg)
+    st.error(error_msg)
+
+def display_error_message(message: str, error_type: str = "error") -> None:
+    """
+    Display an error message to the user
     
-    return {
-        'success': False,
-        'message': error_message,
-        'error_code': getattr(error, 'error_code', 'UNKNOWN_ERROR'),
-        'details': getattr(error, 'details', None) if Environment.DEBUG_MODE else None
-    } 
+    Args:
+        message: The error message to display
+        error_type: Type of error (error, warning, info)
+    """
+    if error_type == "error":
+        st.error(message)
+    elif error_type == "warning":
+        st.warning(message)
+    elif error_type == "info":
+        st.info(message)
+    else:
+        st.error(message)
+    
+    logger.error(f"Displayed {error_type} message: {message}")
+
+def validate_input(data: Any, required_fields: list = None) -> bool:
+    """
+    Validate input data
+    
+    Args:
+        data: The data to validate
+        required_fields: List of required fields
+        
+    Returns:
+        bool: True if validation passes
+        
+    Raises:
+        ValidationError: If validation fails
+    """
+    if data is None:
+        raise ValidationError("Input data cannot be None")
+    
+    if required_fields:
+        if not isinstance(data, dict):
+            raise ValidationError("Input data must be a dictionary")
+        
+        missing_fields = [field for field in required_fields if field not in data]
+        if missing_fields:
+            raise ValidationError(f"Missing required fields: {', '.join(missing_fields)}")
+    
+    return True 

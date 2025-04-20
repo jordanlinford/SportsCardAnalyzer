@@ -1,3 +1,172 @@
+"""
+Centralized styling module for consistent branding and UI elements
+"""
+
+import streamlit as st
+
+class AppStyles:
+    """Application-wide styling constants and utilities"""
+    
+    # Color Palette
+    PRIMARY_COLOR = "#0056d2"
+    SECONDARY_COLOR = "#0041a8"
+    ACCENT_COLOR = "#ff6b6b"
+    BACKGROUND_COLOR = "#f9f9f9"
+    TEXT_COLOR = "#333333"
+    SUCCESS_COLOR = "#28a745"
+    WARNING_COLOR = "#ffc107"
+    ERROR_COLOR = "#dc3545"
+    
+    # Typography
+    HEADER_FONT = "Arial, sans-serif"
+    BODY_FONT = "Arial, sans-serif"
+    
+    # Spacing
+    PADDING = "1rem"
+    MARGIN = "0.5rem"
+    BORDER_RADIUS = "6px"
+    
+    # Card Styles
+    CARD_SHADOW = "0 1px 3px rgba(0,0,0,0.15)"
+    CARD_HOVER_SHADOW = "0 4px 6px rgba(0,0,0,0.1)"
+    
+    @staticmethod
+    def apply_global_styles():
+        """Apply global CSS styles to the application"""
+        st.markdown(f"""
+        <style>
+            /* Global Styles */
+            body {{
+                font-family: {AppStyles.BODY_FONT};
+                color: {AppStyles.TEXT_COLOR};
+                background-color: {AppStyles.BACKGROUND_COLOR};
+            }}
+            
+            /* Headers */
+            h1, h2, h3, h4, h5, h6 {{
+                font-family: {AppStyles.HEADER_FONT};
+                color: {AppStyles.PRIMARY_COLOR};
+            }}
+            
+            /* Buttons */
+            .stButton > button {{
+                background-color: {AppStyles.PRIMARY_COLOR};
+                color: white;
+                border: none;
+                border-radius: {AppStyles.BORDER_RADIUS};
+                padding: 0.5rem 1rem;
+                font-weight: bold;
+                transition: all 0.3s ease;
+            }}
+            
+            .stButton > button:hover {{
+                background-color: {AppStyles.SECONDARY_COLOR};
+                transform: translateY(-1px);
+            }}
+            
+            /* Cards */
+            .card-container {{
+                background: white;
+                border-radius: {AppStyles.BORDER_RADIUS};
+                box-shadow: {AppStyles.CARD_SHADOW};
+                padding: {AppStyles.PADDING};
+                margin: {AppStyles.MARGIN};
+                transition: all 0.3s ease;
+            }}
+            
+            .card-container:hover {{
+                box-shadow: {AppStyles.CARD_HOVER_SHADOW};
+                transform: translateY(-2px);
+            }}
+            
+            /* Tables */
+            .stDataFrame {{
+                border-radius: {AppStyles.BORDER_RADIUS};
+                box-shadow: {AppStyles.CARD_SHADOW};
+            }}
+            
+            /* Metrics */
+            .stMetric {{
+                background: white;
+                border-radius: {AppStyles.BORDER_RADIUS};
+                padding: {AppStyles.PADDING};
+                box-shadow: {AppStyles.CARD_SHADOW};
+            }}
+            
+            /* Success Messages */
+            .stAlert-success {{
+                background-color: {AppStyles.SUCCESS_COLOR};
+                color: white;
+                border-radius: {AppStyles.BORDER_RADIUS};
+            }}
+            
+            /* Warning Messages */
+            .stAlert-warning {{
+                background-color: {AppStyles.WARNING_COLOR};
+                color: {AppStyles.TEXT_COLOR};
+                border-radius: {AppStyles.BORDER_RADIUS};
+            }}
+            
+            /* Error Messages */
+            .stAlert-error {{
+                background-color: {AppStyles.ERROR_COLOR};
+                color: white;
+                border-radius: {AppStyles.BORDER_RADIUS};
+            }}
+        </style>
+        """, unsafe_allow_html=True)
+    
+    @staticmethod
+    def get_card_style():
+        """Get CSS for card display"""
+        return f"""
+        <style>
+            .card-container {{
+                position: relative;
+                width: 100%;
+                height: 200px;
+                border-radius: {AppStyles.BORDER_RADIUS};
+                overflow: hidden;
+                transition: transform 0.2s ease-in-out;
+                box-shadow: {AppStyles.CARD_SHADOW};
+                margin-bottom: {AppStyles.MARGIN};
+                background: {AppStyles.BACKGROUND_COLOR};
+                display: flex;
+                align-items: center;
+                justify-content: center;
+            }}
+            
+            .card-container:hover {{
+                transform: scale(1.02);
+                box-shadow: {AppStyles.CARD_HOVER_SHADOW};
+            }}
+            
+            .card-image {{
+                max-width: 100%;
+                max-height: 100%;
+                object-fit: contain;
+                padding: 5px;
+            }}
+            
+            .card-overlay {{
+                position: absolute;
+                bottom: 0;
+                width: 100%;
+                background: rgba(0,0,0,0.75);
+                color: white;
+                font-size: 0.7rem;
+                padding: 0.25rem;
+                text-align: center;
+                opacity: 0;
+                transition: opacity 0.3s ease-in-out;
+            }}
+            
+            .card-container:hover .card-overlay {{
+                opacity: 1;
+            }}
+        </style>
+        """
+
 def get_collection_styles():
     """Return CSS styles for collection display"""
     return """

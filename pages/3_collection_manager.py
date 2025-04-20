@@ -1541,112 +1541,64 @@ def display_collection_grid(filtered_collection, show_filters=True):
         st.warning("No cards found in your collection with the current filters.")
         return
     
-    # Try to import the CardDisplay component from the correct path
-    try:
-        from modules.ui.components.CardDisplay import CardDisplay
-        
-        # Define the edit card handler function
-        def edit_card_handler(idx):
-            st.session_state.edit_mode = True
-            st.session_state.edit_index = idx
-            # Get the actual card data for editing
-            st.session_state.edit_card_data = filtered_collection[idx]
-            # Also set these for backward compatibility
-            st.session_state.editing_card = True
-            st.session_state.editing_card_index = idx
-            st.rerun()
-        
-        # Use the CardDisplay component to render the grid
-        CardDisplay.display_grid(filtered_collection, on_click=edit_card_handler)
-        
-        # Add delete buttons below the grid
-        st.markdown("### Delete Cards")
-        st.markdown("Select a card to delete from your collection:")
-        
-        # Create a dropdown to select card with more descriptive options
-        card_options = [f"{i+1}. {card.get('player_name', 'Unknown')} - {card.get('year', '')} {card.get('card_set', '')} #{card.get('card_number', '')}" 
-                        for i, card in enumerate(filtered_collection)]
-        
-        if not card_options:
-            st.info("No cards available to delete.")
-            return
+    # Check if new display manager is enabled
+    if is_feature_enabled('new_display_manager'):
+        try:
+            from modules.core.display_manager import DisplayManager
             
-        selected_idx = st.selectbox("Select card to delete", 
-                                   range(len(card_options)), 
-                                   format_func=lambda i: card_options[i],
-                                   help="Select a card from the dropdown to delete")
-        
-        # Create confirmation for deletion
-        confirm_key = f"confirm_delete_{selected_idx}"
-        if confirm_key not in st.session_state:
-            st.session_state[confirm_key] = False
-            
-        if not st.session_state[confirm_key]:
-            if st.button(f"🗑️ Delete Selected Card", key="delete_selected"):
-                st.session_state[confirm_key] = True
+            # Define the edit card handler function
+            def edit_card_handler(idx):
+                st.session_state.edit_mode = True
+                st.session_state.edit_index = idx
+                st.session_state.edit_card_data = filtered_collection[idx]
+                st.session_state.editing_card = True
+                st.session_state.editing_card_index = idx
                 st.rerun()
-        else:
-            # Show confirmation buttons
-            confirm_col1, confirm_col2 = st.columns(2)
-            with confirm_col1:
-                if st.button("✓ Yes, Delete Card", key="confirm_yes", type="primary"):
-                    # Get the card
-                    card = filtered_collection[selected_idx]
-                    
-                    # Get the card's unique ID
-                    card_id = card.get('id')
-                    if not card_id:
-                        # Generate card_id from card details if not available
-                        player_name = card.get('player_name', '')
-                        year = card.get('year', '')
-                        card_set = card.get('card_set', '')
-                        card_number = card.get('card_number', '')
-                        card_id = f"{player_name}_{year}_{card_set}_{card_number}".replace(" ", "_").lower()
-                    
-                    # Find corresponding card in main collection
-                    main_collection_index = None
-                    if 'collection' in st.session_state:
-                        for i, main_card in enumerate(st.session_state.collection):
-                            if main_card.get('id') == card_id:
-                                main_collection_index = i
-                                break
-                    
-                    # Debug information
-                    with st.expander("Debug Information", expanded=False):
-                        st.markdown(f"**Card Selected:**")
-                        st.write(f"Player: {card.get('player_name', '')}")
-                        st.write(f"Year: {card.get('year', '')}")
-                        st.write(f"Set: {card.get('card_set', '')}")
-                        st.write(f"Number: {card.get('card_number', '')}")
-                        st.write(f"Card ID: {card_id}")
-                        st.write(f"Index in filtered collection: {selected_idx}")
-                        st.write(f"Index in main collection: {main_collection_index}")
-                    
-                    # Call delete_card with card_id and main_collection_index
-                    result = delete_card(card_id, main_collection_index)
-                    
-                    if result['success']:
-                        st.success(result['message'])
-                        # Reset the confirmation state
-                        st.session_state[confirm_key] = False
-                        # Force a complete refresh of the page
-                        st.session_state['force_refresh'] = True
-                        st.rerun()
-                    else:
-                        st.error(f"Failed to delete card: {result['message']}")
-                        with st.expander("Error Details"):
-                            st.write(result)
             
-            with confirm_col2:
-                if st.button("✗ No, Cancel", key="confirm_no"):
-                    # Reset the confirmation state
-                    st.session_state[confirm_key] = False
-                    st.rerun()
+            # Use the new DisplayManager
+            DisplayManager.display_collection_grid(filtered_collection, on_card_click=edit_card_handler)
+            
+        except Exception as e:
+            st.error(f"Error using new display manager: {str(e)}")
+            st.info("Falling back to original display implementation")
+            # Fall through to original implementation
+    else:
+        # Original implementation
+        try:
+            from modules.ui.components.CardDisplay import CardDisplay
+            
+            # Define the edit card handler function
+            def edit_card_handler(idx):
+                st.session_state.edit_mode = True
+                st.session_state.edit_index = idx
+                st.session_state.edit_card_data = filtered_collection[idx]
+                st.session_state.editing_card = True
+                st.session_state.editing_card_index = idx
+                st.rerun()
+            
+            # Use the original CardDisplay component
+            CardDisplay.display_grid(filtered_collection, on_click=edit_card_handler)
+            
+        except Exception as e:
+            st.error(f"Error displaying collection: {str(e)}")
+            return
     
-    except Exception as e:
-        st.error(f"Error displaying collection grid: {str(e)}")
-        print(f"Error in display_collection_grid: {str(e)}")
-        print(traceback.format_exc())
+    # Add delete buttons below the grid (works with both implementations)
+    st.markdown("### Delete Cards")
+    st.markdown("Select a card to delete from your collection:")
+    
+    # Create a dropdown to select card with more descriptive options
+    card_options = [f"{i+1}. {card.get('player_name', 'Unknown')} - {card.get('year', '')} {card.get('card_set', '')} #{card.get('card_number', '')}" 
+                    for i, card in enumerate(filtered_collection)]
+    
+    if not card_options:
+        st.info("No cards available to delete.")
+        return
+        
+    selected_idx = st.selectbox("Select card to delete", 
+                               range(len(card_options)), 
+                               format_func=lambda i: card_options[i],
+                               help="Select a card from the dropdown to delete")
 
 def display_collection_table(collection):
     """Display the collection in a table format"""
