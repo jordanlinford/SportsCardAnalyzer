@@ -131,7 +131,7 @@ def render_subscription_page():
                 try:
                     payment_service.cancel_subscription(st.session_state.uid)
                     st.success("Your subscription has been cancelled")
-                    st.experimental_rerun()
+                    st.rerun()
                 except Exception as e:
                     st.error(f"Error cancelling subscription: {str(e)}")
 

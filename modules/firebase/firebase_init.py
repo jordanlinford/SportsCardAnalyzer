@@ -43,11 +43,24 @@ def initialize_firebase_admin():
             print("Initializing new Firebase Admin SDK app...")
             
             # Check if service account file exists
-            service_account_path = 'modules/firebase/serviceAccountKey.json'
+            service_account_path = 'firebase_key.json'
             if not os.path.exists(service_account_path):
-                error_msg = f"Service account file not found at {service_account_path}"
-                print(f"Error: {error_msg}")
-                raise FileNotFoundError(error_msg)
+                # Try alternate locations
+                alternate_paths = [
+                    'modules/firebase/serviceAccountKey.json',
+                    os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), 'firebase_key.json')
+                ]
+                
+                for path in alternate_paths:
+                    if os.path.exists(path):
+                        service_account_path = path
+                        break
+                else:
+                    error_msg = f"Service account file not found at {service_account_path} or any alternate locations"
+                    print(f"Error: {error_msg}")
+                    raise FileNotFoundError(error_msg)
+            
+            print(f"Using service account at: {service_account_path}")
             
             # Initialize the app
             cred = credentials.Certificate(service_account_path)

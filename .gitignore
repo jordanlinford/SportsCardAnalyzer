@@ -1,3 +1,13 @@
+# Environment variables
+.env
+.env.local
+.env.*.local
+
+# Firebase credentials
+firebase_key.json
+firebase-credentials.json
+*-firebase-adminsdk-*.json
+
 # Python
 __pycache__/
 *.py[cod]
@@ -31,12 +41,22 @@ ENV/
 *.swp
 *.swo
 
-# Environment variables
-.env
-.env.local
+# OS
+.DS_Store
+Thumbs.db
 
 # Logs
 *.log
+logs/
+
+# Test coverage
+.coverage
+htmlcov/
+.pytest_cache/
+
+# Backup files
+*.bak
+*.orig
 
 # Local development
 .DS_Store

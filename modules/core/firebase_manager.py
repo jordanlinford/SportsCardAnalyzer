@@ -315,7 +315,7 @@ class FirebaseManager:
     
     @staticmethod
     def get_current_user():
-        """Get the current authenticated user."""
+        """Get current user data"""
         return FirebaseManager._current_user
     
     @staticmethod
@@ -366,6 +366,15 @@ class FirebaseManager:
                 }
                 self.db.collection('users').document(user['localId']).set(user_data)
             else:
+                # Get the Firestore user profile data
+                user_profile = user_doc.to_dict()
+                
+                # Merge the Firestore profile data with the auth data
+                # This is the key change - preserve custom profile fields
+                for key, value in user_profile.items():
+                    if key not in user:
+                        user[key] = value
+                
                 # Update last login
                 self.db.collection('users').document(user['localId']).update({
                     'last_login': datetime.now()
@@ -452,10 +461,48 @@ class FirebaseManager:
             logger.error(f"Error updating user: {str(e)}")
             return False
 
-    @staticmethod
-    def sign_in_with_google():
+    def update_card(self, uid: str, card_id: str, updated_data: dict) -> bool:
+        """Update a card in the user's collection
+        
+        Args:
+            uid: User ID
+            card_id: Card ID (in format player_name_year_set_number)
+            updated_data: Updated card data
+            
+        Returns:
+            bool: True if successful, False otherwise
+        """
+        try:
+            if not self._initialized:
+                if not self.initialize():
+                    logger.error("Firebase not initialized")
+                    return False
+
+            # Get the user's cards collection reference
+            cards_ref = self.db.collection('users').document(uid).collection('cards')
+            
+            # Update the card
+            cards_ref.document(card_id).set(updated_data)
+            
+            # Update the user's last_modified timestamp
+            self.db.collection('users').document(uid).update({
+                'last_modified': datetime.now().isoformat(),
+                'collection_version': firestore.Increment(1)  # Increment version number
+            })
+            
+            logger.info(f"Card updated successfully: {card_id}")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Error updating card: {str(e)}")
+            return False
+
+    def sign_in_with_google(self):
         """Sign in user with Google."""
         try:
+            if not self._initialized:
+                raise RuntimeError("Firebase not initialized")
+                
             # This is a placeholder - actual implementation would use Firebase UI
             # or a custom OAuth flow
             raise NotImplementedError("Google sign-in not implemented yet")
@@ -468,7 +515,7 @@ class FirebaseManager:
         """Update user profile in Firebase"""
         try:
             # Update user profile in Firestore
-            db = FirebaseManager.get_firestore_client()
+            db = FirebaseManager.get_instance().db
             if not db:
                 raise RuntimeError("Firestore client is not initialized")
             user_ref = db.collection('users').document(uid)
@@ -483,4 +530,13 @@ class FirebaseManager:
             return True
         except Exception as e:
             logger.error(f"Error updating user profile: {str(e)}")
-            return False 
+            return False
+
+    def is_initialized(self):
+        """Check if Firebase is initialized"""
+        return FirebaseManager._initialized
+        
+    @staticmethod
+    def is_initialized_static():
+        """Static method to check if Firebase is initialized"""
+        return FirebaseManager._initialized 
